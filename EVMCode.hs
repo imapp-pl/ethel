@@ -53,29 +53,37 @@ data EVMOpcode =
     -- 0xf0
     CREATE | CALL | RETURN | POST | CALLSTATELESS |
     -- 0xff
-    SUICIDE 
+    SUICIDE |
+    JUMPDEST
   deriving (Show, Eq, Ord, A.Ix)
 
 -- instance A.Ix EVMOpcode where
   
 
-data EVMInstr = EVMSimple EVMOpcode
-              | EVMPush LargeWord
-              | EVMDup Int
-              | EVMSwap Int
-              deriving (Show, Eq)
+data EVMInstr a = EVMSimple EVMOpcode
+                | EVMPush LargeWord
+                | EVMDup Int
+                | EVMSwap Int
+                | EXTComment String
+                | EXTFuncAddr a
+                deriving (Show, Eq)
 
-type EVMCode = [EVMInstr]
+type EVMCode a = [EVMInstr a]
 
 
-instr2bytes :: EVMInstr -> [Word8]
+instr2bytes :: EVMInstr a -> [Word8]
 instr2bytes (EVMPush lw) = (fromIntegral (0x60 - 1 + wordSize lw))
                            : wordBytes lw
 instr2bytes (EVMDup n)   = [fromIntegral (0x80 - 1 + n)]
 instr2bytes (EVMSwap n)  = [fromIntegral (0x90 - 1 + n)]
 instr2bytes (EVMSimple op) = [fromIntegral (opcode2byteMap A.! op)]
 
-code2bytes :: EVMCode -> [Word8]
+instr2bytes (EXTComment s) = []
+instr2bytes (EXTFuncAddr a) = instr2bytes (EVMPush zero4)
+                              where zero4 = LargeWord 4
+                                            (replicate 4 (fromIntegral 0))
+
+code2bytes :: EVMCode a -> [Word8]
 code2bytes = foldr (++) [] . map instr2bytes
 
 
@@ -116,6 +124,7 @@ byteOpcodePairs =
   [CREATE, CALL, RETURN, POST, CALLSTATELESS]
   ++
   [(0xff, SUICIDE)]
-  
+  ++
+  [(0xa0, JUMPDEST)]
 
   
