@@ -4,7 +4,7 @@ import Control.Monad.State
 
 import Syntax
 import Parser
-import Semantics
+import CompilerState
 import Compiler
 
 compile :: String -> IO ()

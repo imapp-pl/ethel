@@ -1,72 +1,89 @@
 module Compiler where
 
-import Control.Monad.State 
-import qualified Data.HashMap.Strict as HM
-import qualified Syntax as S
+import CompilerState
+import Syntax
 
+data DeclInfo = DeclInfo -- nothing yet
 
-type ErrorMsg = String
+compileError :: Position -> String -> CompilerMonad DeclInfo ()
+compileError pos msg =
+  reportError (show pos ++ ": Error: " ++ msg)
+  
 
-type SymbolTable = HM.HashMap S.Ident S.Declaration
-type DeclTable info = HM.HashMap S.Declaration info
+insertOrReport :: Ident -> Declaration -> CompilerMonad DeclInfo ()
+insertOrReport ident decl = do
+  let ident = declIdent decl
+  maybeDecl <- lookupCurrent ident
+  case maybeDecl of
+    Just decl' -> compileError (declPos decl) $
+                  "Duplicate declaration of '" ++ ident ++ 
+                  "', previous declaration at " ++ show (declPos decl')
+    Nothing -> symtabInsert ident decl
+    
 
-data CompilerState info = CompilerState
-                          { csErrorMsgs :: [ErrorMsg]
-                          , csScopes :: [SymbolTable]
-                          , csDeclInfo :: DeclTable info
-                          }
+compileDecls :: [Declaration] -> CompilerMonad DeclInfo ()
+compileDecls decls = do
+  mapM_ insertDecl decls
+  mapM_ checkDecl decls
 
-emptyState :: CompilerState info
-emptyState = CompilerState
-             { csErrorMsgs = []
-             , csScopes = [HM.empty]
-             , csDeclInfo = HM.empty
-             }
+  where insertDecl decl = insertOrReport (declIdent decl) decl
 
-type CompilerMonad info = State (CompilerState info)
+checkDecl :: Declaration -> CompilerMonad DeclInfo ()
+checkDecl decl = do
+  enterScope
+  mapM_ (declareArg (declPos decl)) (declArgs decl)
+  checkExpr (declBody decl)
+  leaveScope
 
+  where declareArg pos arg = do
+          let argDecl = makeArgDecl pos arg
+          insertOrReport arg argDecl
 
-enterScope :: CompilerMonad info ()
-enterScope = do
-  modify $ \ cs -> cs { csScopes = HM.empty : csScopes cs }
+checkExpr :: Expression -> CompilerMonad DeclInfo ()
 
-leaveScope :: CompilerMonad info ()
-leaveScope = do
-  modify $ \ cs -> cs { csScopes = tail (csScopes cs) }
+checkExpr (LitExpr _ _) = return ()
 
+checkExpr (VarExpr pos ident) = do
+  maybeDecl <- lookupSymbol ident
+  case maybeDecl of
+    Nothing -> compileError pos $ "Undefined identifier '" ++ ident ++ "'"
+    Just decl -> if length (declArgs decl) > 0 
+                 then compileError pos $
+                      "Symbol '" ++ ident ++ "' requires " ++
+                      show (length (declArgs decl)) ++ " argument(s)"
+                 else return ()
 
--- Symbol lookup in current scope
-lookupCurrent :: S.Ident -> CompilerMonad info (Maybe S.Declaration)
-lookupCurrent ident = do
-  (s : _) <- gets csScopes
-  return $ HM.lookup ident s
+checkExpr (CallExpr pos ident args) = do
+  maybeDecl <- lookupSymbol ident
+  case maybeDecl of
+    Nothing -> compileError pos $ "Undefined identifier '" ++ ident ++ "'"
+    Just decl -> do let arity = length (declArgs decl)
+                    if arity /= length args
+                      then compileError pos $
+                           "Function '" ++ ident ++ "' requires " ++
+                           show arity ++ " arguments"
+                      else return ()
+                    mapM_ checkExpr args
 
--- Symbol lookup in all enclosing scopes
-lookupSymbol :: S.Ident -> CompilerMonad info (Maybe S.Declaration)
-lookupSymbol ident = do
-  scopes <- gets csScopes
-  case dropWhile notFound (map (HM.lookup ident) scopes) of
-    [] -> return Nothing
-    res:_ -> return res       
-  where notFound Nothing = True
-        notFound (Just _) = False
+checkExpr (DefExpr decls body) = do
+  enterScope
+  checkDecls decls
+  checkExpr body
+  leaveScope
 
-symtabInsert :: S.Ident -> S.Declaration -> CompilerMonad info ()
-symtabInsert ident decl = do
-  (s : scopes) <- gets csScopes
-  modify $ \ cs -> let s' = HM.insert ident decl s
-                   in  cs { csScopes = s' : scopes }
+checkExpr (IfExpr pos cexp texp fexp) = do
+  checkExpr cexp
+  checkExpr texp
+  checkExpr fexp
 
+checkExpr (UnOpExpr pos op arg) = do
+  checkExpr arg
 
-reportError :: ErrorMsg -> CompilerMonad info ()
-reportError msg =
-  modify $ \ cs -> cs { csErrorMsgs = msg : csErrorMsgs cs } 
+checkExpr (BinOpExpr op lhs rhs) = do
+  checkExpr lhs
+  checkExpr rhs
 
-getErrors :: CompilerMonad info [ErrorMsg]
-getErrors = gets csErrorMsgs
-
-hasErrors :: CompilerMonad info Bool
-hasErrors = do
-  msgs <- gets csErrorMsgs
-  return $ msgs /= []
-
+  
+                    
+                    
+               
