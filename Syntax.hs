@@ -1,10 +1,10 @@
 module Syntax where
 
-import qualified Text.Parsec.Pos
+import qualified Text.Parsec.Pos as Pos
 import qualified Text.PrettyPrint as PP
 
 type Ident = String
-type Position = Text.Parsec.Pos.SourcePos
+type Position = Pos.SourcePos
 
 data Expression = LitExpr
                   { pos :: Position
@@ -49,6 +49,11 @@ data Declaration = Declaration
                    , declArgs  :: [Ident]
                    , declBody  :: Expression }
 
+instance Eq Declaration where
+    d1 == d2  = declPos d1 == declPos d2 
+                && declIdent d1 == declIdent d2
+
+
 makeDecl pos ident args body = Declaration
                                { declPos = pos
                                , declType = DefDecl
@@ -63,6 +68,8 @@ makeArgDecl pos ident = Declaration
                         , declArgs = []
                         , declBody = VarExpr pos ident }
                         -- body does not matter for args
+
+fakeDecl = makeArgDecl (Pos.initialPos "") "$"
 
 newtype Program = Program { decls :: [Declaration] }
 

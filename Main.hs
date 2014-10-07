@@ -13,8 +13,7 @@ compile path = do
   let prog = parseString input
   putStrLn (show prog)
 
-  let semAnalysis = do { checkDecls (decls prog) } 
-  let (_,endState) = runState semAnalysis emptyState
+  let (_,endState) = runState (enterScope >> compileProgram prog) emptyState
   let global = head (csScopes endState)
 
   putStrLn "Global scope:"
@@ -22,5 +21,7 @@ compile path = do
 
   putStrLn "Error messages:"
   mapM_ putStrLn (csErrorMsgs endState)
-  
+
+  putStrLn "Decls code:"
+  putStrLn (show $ csDeclInfo endState)
   

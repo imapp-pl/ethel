@@ -1,9 +1,11 @@
 module CompilerState where
 
 import Control.Monad.State 
+import qualified Data.Hashable as H
 import qualified Data.HashMap.Strict as HM
 import qualified Syntax as S
-
+import qualified Stack
+import qualified Text.Parsec.Pos as Pos
 
 type ErrorMsg = String
 
@@ -14,17 +16,32 @@ data CompilerState info = CompilerState
                           { csErrorMsgs :: [ErrorMsg]
                           , csScopes :: [SymbolTable]
                           , csDeclInfo :: DeclTable info
+                          , csLocalStack :: Stack.Stack S.Declaration
                           }
+
+instance H.Hashable Pos.SourcePos where
+    hashWithSalt salt pos = 
+        H.hashWithSalt salt (Pos.sourceName pos, 
+                                    (Pos.sourceLine pos, Pos.sourceColumn pos))
+
+instance H.Hashable S.Declaration where
+    hashWithSalt salt decl = 
+        H.hashWithSalt salt (S.declPos decl, S.declIdent decl)
+    
 
 emptyState :: CompilerState info
 emptyState = CompilerState
              { csErrorMsgs = []
-             , csScopes = [HM.empty]
+             , csScopes = [] -- HM.empty]
              , csDeclInfo = HM.empty
+             , csLocalStack = Stack.empty
              }
 
 type CompilerMonad info = State (CompilerState info)
 
+setDeclInfo :: S.Declaration -> info -> CompilerMonad info ()
+setDeclInfo decl info = 
+    modify $ \ cs -> cs { csDeclInfo = HM.insert decl info (csDeclInfo cs) }
 
 enterScope :: CompilerMonad info ()
 enterScope = do
@@ -34,6 +51,10 @@ leaveScope :: CompilerMonad info ()
 leaveScope = do
   modify $ \ cs -> cs { csScopes = tail (csScopes cs) }
 
+onTopLevel :: CompilerMonad info Bool
+onTopLevel = do
+  scopes <- gets csScopes
+  return $ 1 >= length scopes
 
 -- Symbol lookup in current scope
 lookupCurrent :: S.Ident -> CompilerMonad info (Maybe S.Declaration)
@@ -57,6 +78,23 @@ symtabInsert ident decl = do
   modify $ \ cs -> let s' = HM.insert ident decl s
                    in  cs { csScopes = s' : scopes }
 
+
+clearStack :: CompilerMonad info ()
+clearStack = modify $ \ cs -> cs { csLocalStack = Stack.empty }
+
+pushStack :: S.Declaration -> CompilerMonad info ()
+pushStack decl = 
+    modify $ \ cs -> cs { csLocalStack = Stack.push decl (csLocalStack cs) }
+
+popStack :: CompilerMonad info ()
+popStack = 
+    modify $ \ cs -> cs { csLocalStack = Stack.pop (csLocalStack cs) }
+
+stackOffset :: S.Declaration -> CompilerMonad info (Maybe Stack.Offset)
+stackOffset decl = do
+  stack <- gets csLocalStack
+  return $ Stack.offset decl stack
+    
 
 reportError :: ErrorMsg -> CompilerMonad info ()
 reportError msg =

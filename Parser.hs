@@ -17,7 +17,7 @@ languageDef = Lang.emptyDef
               , Tok.nestedComments = True
               , Tok.identStart   = letter
               , Tok.identLetter  = alphaNum <|> oneOf "_'"
-              , Tok.opStart      = oneOf "+-*/=()<>"
+              , Tok.opStart      = oneOf "+-*=()<>"
               , Tok.opLetter     = Tok.opStart languageDef
               , Tok.reservedNames = ["def", "in", "if", "then", "else"]
               , Tok.reservedOpNames = ["+", "-", "*", "/", "=",
