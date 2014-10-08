@@ -171,7 +171,7 @@ compileExpr (CallExpr pos ident args) = do
          else do allocStackItem -- leave space for return address
                  callCode <- compileCall decl args
                  let callLength = codeLength callCode
-                 let lengthWord = makeWord (callLength + 2)
+                 let lengthWord = makeWord (callLength + 1)
                  return $
                    [ EXTComment $ "call to " ++ declIdent decl,
                      EVMPush lengthWord,
