@@ -103,6 +103,7 @@ compileDecl decl = do
 compileLocalVarDecl :: Declaration -> Compiler Code
 compileLocalVarDecl decl = error "Not implemented yet!"
 
+
 compileFuncDecl :: Declaration -> Compiler Code
 compileFuncDecl decl = do
   enterScope
@@ -112,12 +113,15 @@ compileFuncDecl decl = do
   -- allocate slots for args on the local stack
   mapM_ pushStack argDecls  
   bodyCode <- compileExpr (declBody decl)
+  stackSz <- stackSize
   let code = [EXTComment $ "BEGIN func " ++ declIdent decl]
              ++ bodyCode
              -- move return value under the return address
-             ++ [EVMSwap (1 + declArity decl)] 
+             -- ++ [EVMSwap (1 + declArity decl)] 
+             ++ [EVMSwap (stackSz + 1)]
              -- pop function args from the stack
-             ++ replicate (length $ declArgs decl) (EVMSimple POP)
+             -- ++ replicate (length $ declArgs decl) (EVMSimple POP)
+             ++ replicate (stackSz - 1) (EVMSimple POP)
              -- return to caller
              ++ [ EVMSimple JUMP
                 , EXTComment $ "END func " ++ declIdent decl]
@@ -181,6 +185,15 @@ compileExpr (CallExpr pos ident args) = do
           let coda = [ EXTFuncAddr decl, EVMSimple JUMP, EVMSimple JUMPDEST,
                        EXTComment "end of call sequence" ]
           return $ foldr (++) coda argCodes
+
+compileExpr (LetExpr decl body) = do
+  insertOrReport (declIdent decl) decl
+  declCode <- compileExpr (declBody decl)
+  -- allocate place on the stack for the local var
+  popStack
+  pushStack decl
+  bodyCode <- compileExpr body
+  return $ declCode ++ bodyCode
           
 compileExpr (BinOpExpr op lhs rhs) = do
   lhsCode <- compileExpr lhs

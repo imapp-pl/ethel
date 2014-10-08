@@ -73,6 +73,7 @@ symtabInsert ident decl = do
   modify $ \ cs -> let s' = HM.insert ident decl s
                    in  cs { csScopes = s' : scopes }
 
+-- LOCAL STACK ----------------------------------------------------------
 
 clearStack :: CompilerMonad info ()
 clearStack = modify $ \ cs -> cs { csLocalStack = Stack.empty }
@@ -81,19 +82,21 @@ pushStack :: S.Declaration -> CompilerMonad info ()
 pushStack decl = 
     modify $ \ cs -> cs { csLocalStack = Stack.push decl (csLocalStack cs) }
 
-
-allocStackItem :: CompilerMonad info ()
-allocStackItem = pushStack S.fakeDecl
-  
 popStack :: CompilerMonad info ()
 popStack = 
     modify $ \ cs -> cs { csLocalStack = Stack.pop (csLocalStack cs) }
 
+allocStackItem :: CompilerMonad info ()
+allocStackItem = pushStack S.fakeDecl
+
+stackSize :: CompilerMonad info Int
+stackSize = gets csLocalStack >>= return . Stack.stackSize
+
 stackOffset :: S.Declaration -> CompilerMonad info (Maybe Stack.Offset)
-stackOffset decl = do
-  stack <- gets csLocalStack
-  return $ Stack.offset decl stack
-    
+stackOffset decl = gets csLocalStack >>= return . Stack.offset decl
+
+
+-- ERROR MSGS ------------------------------------------------------------
 
 reportError :: ErrorMsg -> CompilerMonad info ()
 reportError msg =

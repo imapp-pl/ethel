@@ -1,0 +1,7 @@
+let f a =
+    let b = a + 2      // b = a + 2
+    in let c = a + b   // c = a + a + 2
+       in  a + c       // a + a + a + 2
+
+return f 1  // should return 5
+     
