@@ -14,20 +14,22 @@ data LargeWord = LargeWord
 
 makeWord :: (Integral i) => i -> LargeWord
 makeWord i = LargeWord (length bs) bs
-  where bs = integer2bytes i
+    where bs = integer2bytes i
 
-        integer2bytes :: (Integral i) => i -> [Word8]
-        integer2bytes = i2bs []
+          integer2bytes :: (Integral i) => i -> [Word8]
+          integer2bytes = i2bs []
 
-        i2bs ws i =
-          case i `divMod` 256 of
-            (0, mod) -> fromIntegral mod : ws
-            (j, mod) -> i2bs (fromIntegral mod : ws) j
+          i2bs ws i =
+              case i `divMod` 256 of
+                (0, mod) -> fromIntegral mod : ws
+                (j, mod) -> i2bs (fromIntegral mod : ws) j
 
 makeWord32 :: (Integral i) => i -> LargeWord
 makeWord32 i = LargeWord 4 paddedBytes
-  where paddedBytes = case makeWord (i `mod` 2^32) of
-          LargeWord size bytes -> (replicate (4-size) (fromInteger 0)) ++ bytes
+    where paddedBytes = 
+              case makeWord (toInteger i `mod` 2^32) of
+                LargeWord size bytes -> 
+                    (replicate (4-size) (fromInteger 0)) ++ bytes
 
 
 data EVMOpcode =
