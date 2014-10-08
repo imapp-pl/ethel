@@ -19,9 +19,9 @@ data Expression = LitExpr
                   , func :: Ident
                   , callArgs :: [Expression] }
 
-                | DefExpr
-                  { localDecls :: [Declaration]
-                  , defBody :: Expression }
+                | LetExpr
+                  { letDecl :: Declaration
+                  , letBody :: Expression }
 
                 | IfExpr
                   { pos :: Position
@@ -53,6 +53,9 @@ instance Eq Declaration where
     d1 == d2  = declPos d1 == declPos d2 
                 && declIdent d1 == declIdent d2
 
+declArity :: Declaration -> Int
+declArity = length . declArgs
+
 
 makeDecl pos ident args body = Declaration
                                { declPos = pos
@@ -71,7 +74,10 @@ makeArgDecl pos ident = Declaration
 
 fakeDecl = makeArgDecl (Pos.initialPos "") "$"
 
-newtype Program = Program { decls :: [Declaration] }
+
+data Program = Program
+               { decls :: [Declaration]
+               , mainExpr :: Expression }
 
 
 infixl 6 <+>
@@ -81,17 +87,19 @@ infixl 5 $$, $+$
 ($$) = (PP.$$)
 ($+$) = (PP.$+$)
 
-programToDoc prog = PP.vcat $
-                    map (\d -> declToDoc d $$ PP.text "") (decls prog)
+programToDoc prog =
+  (PP.vcat $ map (\d -> declToDoc d $$ PP.text "") (decls prog))
+  $+$
+  PP.text "return" <+> exprToDoc False (mainExpr prog)
                     
 
 declToDoc decl =
-  let head = PP.text "def" <+> PP.text (declIdent decl)
+  let head = PP.text "let" <+> PP.text (declIdent decl)
              <+> PP.hsep (map  PP.text (declArgs decl))
              <+> PP.text "="
   in
    case (declBody decl) of
-     e@(DefExpr _ _) -> head $$ PP.nest 4 (exprToDoc False e)
+     e@(LetExpr _ _) -> head $$ PP.nest 4 (exprToDoc False e)
      e -> head <+> exprToDoc False e
 
 exprToDoc _ (LitExpr _ v) = PP.text $ show v
@@ -99,9 +107,9 @@ exprToDoc _ (VarExpr _ id) = PP.text id
 exprToDoc isArg(CallExpr _ func args) =
   inParens isArg $
   PP.text func <+> PP.hsep (map (exprToDoc True) args)
-exprToDoc isArg (DefExpr decls body) =
+exprToDoc isArg (LetExpr decl body) =
   inParens isArg $
-  PP.vcat (map declToDoc decls)
+  declToDoc decl 
   $+$ PP.text "in" <+> exprToDoc False body
 exprToDoc isArg (IfExpr _ cond texp fexp) =
   inParens isArg $

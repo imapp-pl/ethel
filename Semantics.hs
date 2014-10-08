@@ -1,6 +1,6 @@
-module Semantics where
+module Compiler where
 
-import Compiler
+import CompilerState
 import Syntax
 
 data DeclInfo = DeclInfo -- nothing yet

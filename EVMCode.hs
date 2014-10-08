@@ -1,3 +1,4 @@
+{-# LANGUAGE TypeSynonymInstances, FlexibleInstances, OverlappingInstances #-}
 module EVMCode where
 
 import Prelude hiding (EQ, GT, LT)
@@ -10,18 +11,22 @@ data LargeWord = LargeWord
                  , wordBytes :: [Word8] } 	-- wordSize bytes
                deriving (Show, Eq, Ord)
 
-
-makeWord :: Integer -> LargeWord
+makeWord :: (Integral i) => i -> LargeWord
 makeWord i = LargeWord (length bs) bs
   where bs = integer2bytes i
 
-        integer2bytes :: Integer -> [Word8]
+        integer2bytes :: (Integral i) => i -> [Word8]
         integer2bytes = i2bs []
 
         i2bs ws i =
           case i `divMod` 256 of
-            (0, mod) -> fromInteger mod : ws
-            (j, mod) -> i2bs (fromInteger mod : ws) j
+            (0, mod) -> fromIntegral mod : ws
+            (j, mod) -> i2bs (fromIntegral mod : ws) j
+
+makeWord32 :: (Integral i) => i -> LargeWord
+makeWord32 i = LargeWord 4 paddedBytes
+  where paddedBytes = case makeWord (i `mod` 2^32) of
+          LargeWord size bytes -> (replicate (4-size) (fromInteger 0)) ++ bytes
 
 
 data EVMOpcode =
@@ -66,10 +71,21 @@ data EVMInstr a = EVMSimple EVMOpcode
                 | EVMSwap Int
                 | EXTComment String
                 | EXTFuncAddr a
-                deriving (Show, Eq)
+                deriving (Eq)
+
+instance Show a => Show (EVMInstr a) where
+  show (EVMSimple op) = show op
+  show (EVMPush word) = "PUSH" ++ show (wordSize word) ++
+                        " " ++ show (wordBytes word)
+  show (EVMDup n) = "DUP" ++ show n
+  show (EVMSwap n) = "SWAP" ++ show n
+  show (EXTComment s) = ";; " ++ s
+  show (EXTFuncAddr a) = "ADDROF " ++ show a
 
 type EVMCode a = [EVMInstr a]
 
+instance Show a => Show (EVMCode a) where
+  show code = foldr (\ i s -> i ++ '\n':s) "" (map show code)
 
 instr2bytes :: EVMInstr a -> [Word8]
 instr2bytes (EVMPush lw) = (fromIntegral (0x60 - 1 + wordSize lw))
@@ -86,12 +102,14 @@ instr2bytes (EXTFuncAddr a) = instr2bytes (EVMPush zero4)
 code2bytes :: EVMCode a -> [Word8]
 code2bytes = foldr (++) [] . map instr2bytes
 
+codeLength :: EVMCode a -> Int
+codeLength = length . code2bytes 
 
 opcode2byteMap :: A.Array EVMOpcode Word8
 opcode2byteMap = A.array (STOP, SUICIDE) opcodeBytePairs
 
-byte2OpcodeMap :: A.Array Word8 EVMOpcode
-byte2OpcodeMap = A.array (0, 0xff) byteOpcodePairs
+byte2opcodeMap :: A.Array Word8 EVMOpcode
+byte2opcodeMap = A.array (0, 0xff) byteOpcodePairs
 
 
 opcodeBytePairs :: [(EVMOpcode, Word8)]

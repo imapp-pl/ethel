@@ -9,11 +9,12 @@ import Compiler
 
 compile :: String -> IO ()
 compile path = do
+
   input <- readFile path
   let prog = parseString input
   putStrLn (show prog)
 
-  let (_,endState) = runState (enterScope >> compileProgram prog) emptyState
+  let (code,endState) = runState (compileProgram prog) emptyState
   let global = head (csScopes endState)
 
   putStrLn "Global scope:"
@@ -22,6 +23,7 @@ compile path = do
   putStrLn "Error messages:"
   mapM_ putStrLn (csErrorMsgs endState)
 
-  putStrLn "Decls code:"
-  putStrLn (show $ csDeclInfo endState)
+  putStrLn "Generated code:"
+  putStrLn $ show code
+
   

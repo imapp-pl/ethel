@@ -1,9 +1,7 @@
-def f1 a b = a
-def f2 a b = b
-def f3 a b = a+1
-def f4 a b = 1+b
-def f5 a b = a+b
-def f6 a b = a + (1 + b)
+let f a b = a + b
+let g a b = f (b+1) (a+2)
 
+return g 0 1
+   
 
 

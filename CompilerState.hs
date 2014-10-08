@@ -12,13 +12,14 @@ type ErrorMsg = String
 type SymbolTable = HM.HashMap S.Ident S.Declaration
 type DeclTable info = HM.HashMap S.Declaration info
 
-data CompilerState info = CompilerState
-                          { csErrorMsgs :: [ErrorMsg]
-                          , csScopes :: [SymbolTable]
-                          , csDeclInfo :: DeclTable info
-                          , csLocalStack :: Stack.Stack S.Declaration
-                          }
-
+data CompilerState info =
+  CompilerState
+  { csErrorMsgs :: [ErrorMsg]  
+  , csScopes :: [SymbolTable]                 -- stack of scopes
+  , csDeclInfo :: DeclTable info              -- info for each toplevel decl
+  , csLocalStack :: Stack.Stack S.Declaration -- tracks local stack in functions
+  }
+  
 instance H.Hashable Pos.SourcePos where
     hashWithSalt salt pos = 
         H.hashWithSalt salt (Pos.sourceName pos, 
@@ -32,9 +33,9 @@ instance H.Hashable S.Declaration where
 emptyState :: CompilerState info
 emptyState = CompilerState
              { csErrorMsgs = []
-             , csScopes = [] -- HM.empty]
-             , csDeclInfo = HM.empty
-             , csLocalStack = Stack.empty
+             , csScopes = [] 
+             , csDeclInfo = HM.empty       
+             , csLocalStack = Stack.empty  
              }
 
 type CompilerMonad info = State (CompilerState info)
@@ -42,6 +43,11 @@ type CompilerMonad info = State (CompilerState info)
 setDeclInfo :: S.Declaration -> info -> CompilerMonad info ()
 setDeclInfo decl info = 
     modify $ \ cs -> cs { csDeclInfo = HM.insert decl info (csDeclInfo cs) }
+
+getDeclInfo :: S.Declaration -> CompilerMonad info (Maybe info)
+getDeclInfo decl = do
+  infos <- gets csDeclInfo
+  return $ HM.lookup decl infos
 
 enterScope :: CompilerMonad info ()
 enterScope = do
@@ -86,6 +92,10 @@ pushStack :: S.Declaration -> CompilerMonad info ()
 pushStack decl = 
     modify $ \ cs -> cs { csLocalStack = Stack.push decl (csLocalStack cs) }
 
+
+allocStackItem :: CompilerMonad info ()
+allocStackItem = pushStack S.fakeDecl
+  
 popStack :: CompilerMonad info ()
 popStack = 
     modify $ \ cs -> cs { csLocalStack = Stack.pop (csLocalStack cs) }

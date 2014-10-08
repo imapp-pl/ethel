@@ -7,7 +7,7 @@ import qualified Text.Parsec.Token as Tok
 import qualified Text.Parsec.Language as Lang
 import qualified Text.Parsec.Expr as E
 
-import Syntax 
+import Syntax hiding (inParens)
 
 languageDef :: Lang.LanguageDef st
 languageDef = Lang.emptyDef
@@ -19,7 +19,8 @@ languageDef = Lang.emptyDef
               , Tok.identLetter  = alphaNum <|> oneOf "_'"
               , Tok.opStart      = oneOf "+-*=()<>"
               , Tok.opLetter     = Tok.opStart languageDef
-              , Tok.reservedNames = ["def", "in", "if", "then", "else"]
+              , Tok.reservedNames = ["let", "in", "return"
+                                    , "if", "then", "else"]
               , Tok.reservedOpNames = ["+", "-", "*", "/", "=",
                                        "==", "<>", "<", "<=", ">", ">="]
               , Tok.caseSensitive = True
@@ -41,16 +42,21 @@ operator = Tok.reservedOp lexer
 literal :: Parser Integer
 literal = Tok.natural lexer
 
+inParens :: Parser a -> Parser a
+inParens = Tok.parens lexer
 
 program :: Parser Program
 program = do
+  Tok.whiteSpace lexer
   decls <- many1 declaration
-  return $ Program decls
+  keyword "return"
+  exp <- expression
+  return $ Program decls exp
 
 declaration :: Parser Declaration
 declaration = do
   pos <- getPosition
-  keyword "def"
+  keyword "let"
   id <- identifier
   args <- many identifier
   operator "="
@@ -59,14 +65,14 @@ declaration = do
 
 expression :: Parser Expression
 expression =
-  defExpression <|> ifExpression <|> numericExpression
+  letExpression <|> ifExpression <|> numericExpression
 
-defExpression :: Parser Expression
-defExpression = do
-  decls <- many declaration
+letExpression :: Parser Expression
+letExpression = do
+  decl <- declaration
   keyword "in"
   body <- expression
-  return $ DefExpr decls body
+  return $ LetExpr decl body
 
 ifExpression :: Parser Expression
 ifExpression = do
@@ -80,7 +86,7 @@ ifExpression = do
   return $ IfExpr pos condExpr thenExpr elseExpr
 
 numericExpression :: Parser Expression
-numericExpression = E.buildExpressionParser table atomicExpression
+numericExpression = E.buildExpressionParser table primaryExpression
   where table = [ [ prefix "-", prefix "+" ]
                 , [ binary "*", binary "/" ]
                 , [ binary "+", binary "-" ]
@@ -106,13 +112,17 @@ primaryExpression = do
     _  -> CallExpr func args
 -}
 
+primaryExpression :: Parser Expression
+primaryExpression = 
+  callExpression <|> atomicExpression
+
 atomicExpression :: Parser Expression
 atomicExpression = literalExpression
-                   <|> varOrCallExpression
-                   <|> between (operator "(") (operator ")") expression
+                   <|> varExpression
+                   <|> inParens expression
 
-varOrCallExpression :: Parser Expression
-varOrCallExpression = do
+callExpression :: Parser Expression
+callExpression = do
   pos <- getPosition
   name <- identifier
   args <- many atomicExpression
@@ -141,5 +151,5 @@ parseString input =
 parseFile path = do
   input <- readFile path
   let prog = parseString input
-  putStr (show prog)
+  putStrLn (show prog)
   

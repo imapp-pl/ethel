@@ -1,9 +1,12 @@
 module Compiler where
 
+import qualified Data.HashMap.Strict as HM
+import Control.Monad (foldM, liftM)
+
 import CompilerState
-import Syntax
 import EVMCode
-import qualified Stack
+import Syntax
+-- import qualified Stack
 
 type Code = EVMCode Declaration
 
@@ -13,50 +16,96 @@ data DeclInfo = DeclInfo
 instance Show DeclInfo where
   show = show . diCode 
 
-compileError :: Position -> String -> CompilerMonad DeclInfo ()
-compileError pos msg =
+type Compiler = CompilerMonad DeclInfo
+
+compilerError :: Position -> String -> Compiler ()
+compilerError pos msg =
   reportError (show pos ++ ": Error: " ++ msg)
   
 
-insertOrReport :: Ident -> Declaration -> CompilerMonad DeclInfo ()
+insertOrReport :: Ident -> Declaration -> Compiler ()
 insertOrReport ident decl = do
   let ident = declIdent decl
   maybeDecl <- lookupCurrent ident
   case maybeDecl of
-    Just decl' -> compileError (declPos decl) $
+    Just decl' -> compilerError (declPos decl) $
                   "Duplicate declaration of '" ++ ident ++ 
                   "', previous declaration at " ++ show (declPos decl')
     Nothing -> symtabInsert ident decl
+
     
 
-compileProgram :: Program -> CompilerMonad DeclInfo ()
+compileProgram :: Program -> Compiler Code
 compileProgram prog = do
-  -- enterScope
+  -- enter top-level
+  enterScope 
+  
+  -- compile top-level declarations and the main expression
   compileDecls (decls prog)
-  -- leaveScope
+  mainDecl <- compileMain (mainExpr prog)
 
-compileDecls :: [Declaration] -> CompilerMonad DeclInfo ()
+  -- Compute code offsets for each declaration:
+  -- First build a map of declaration to code offsets,
+  -- then use it to complete JUMP instructions while mergins code.
+  declOffsets <- foldM (\ dos@((d,o):_) decl ->
+                         do Just info <- getDeclInfo d 
+                            let size = codeLength (diCode info)
+                            return $ (decl,o+size):dos )
+                 [(mainDecl, 0)]
+                 (decls prog)
+
+  -- complete addresses and merge code
+  let decl2offset = HM.fromList declOffsets
+  completedCode <- foldM
+                   (\ codeList decl ->
+                     do Just info <- getDeclInfo decl
+                        let code = diCode info
+                            code' = map (rewriteJump decl2offset) code
+                        return $ code' : codeList)
+                   []
+                   (mainDecl : (decls prog))
+  
+  return $ concat $ reverse completedCode
+
+  where
+    rewriteJump decl2offset (EXTFuncAddr decl) = EVMPush $ makeWord32 offset
+      where (Just offset) = HM.lookup decl decl2offset
+    rewriteJump _ instr = instr
+
+compileMain :: Expression -> Compiler Declaration
+compileMain exp = do
+  code <- compileExpr exp
+  -- store the result in memory and generate the return instruction
+  let mainCode = code ++
+                 [ EVMPush (makeWord 0), EVMSimple MSTORE
+                 , EVMPush (makeWord 32), EVMPush (makeWord 0)
+                 , EVMSimple RETURN ]
+  let mainDecl = makeDecl (pos exp) "main" [] exp
+  setDeclInfo mainDecl (DeclInfo mainCode)
+  return mainDecl
+
+compileDecls :: [Declaration] -> Compiler ()
 compileDecls decls = do
   mapM_ insertDecl decls
   mapM_ compileDecl decls
 
   where insertDecl decl = insertOrReport (declIdent decl) decl
 
-compileDecl :: Declaration -> CompilerMonad DeclInfo ()
+compileDecl :: Declaration -> Compiler ()
 compileDecl decl = do
   global <- onTopLevel
   if declArgs decl == []  
-    then if global then compileError (declPos decl) $
+    then if global then compilerError (declPos decl) $
                         "Global vars not supported yet"
          else compileLocalVarDecl decl
-    else if not global then compileError (declPos decl) $
+    else if not global then compilerError (declPos decl) $
                          "Local functions are not supported yet"
          else compileFuncDecl decl
 
-compileLocalVarDecl :: Declaration -> CompilerMonad DeclInfo ()
-compileLocalVarDecl decl = undefined
+compileLocalVarDecl :: Declaration -> Compiler ()
+compileLocalVarDecl decl = error "Not implemented yet!"
 
-compileFuncDecl :: Declaration -> CompilerMonad DeclInfo ()
+compileFuncDecl :: Declaration -> Compiler ()
 compileFuncDecl decl = do
   enterScope
   clearStack
@@ -64,8 +113,16 @@ compileFuncDecl decl = do
   argDecls <- mapM (declareArg (declPos decl)) (declArgs decl)
   -- allocate slots for args on the local stack
   mapM_ pushStack argDecls  
-  code <- compileExpr (declBody decl)
-  -- TODO: code to pop args and return
+  bodyCode <- compileExpr (declBody decl)
+  let code = [EXTComment $ "BEGIN func " ++ declIdent decl]
+             ++ bodyCode
+             -- move return value under the return address
+             ++ [EVMSwap (1 + declArity decl)] 
+             -- pop function args from the stack
+             ++ replicate (length $ declArgs decl) (EVMSimple POP)
+             -- return to caller
+             ++ [ EVMSimple JUMP
+                , EXTComment $ "END func " ++ declIdent decl]
   leaveScope
   -- update function info
   setDeclInfo decl (DeclInfo code)
@@ -75,19 +132,19 @@ compileFuncDecl decl = do
           insertOrReport arg argDecl
           return argDecl
 
-compileExpr :: Expression -> CompilerMonad DeclInfo Code 
+compileExpr :: Expression -> Compiler Code 
 
 compileExpr (LitExpr pos lit) = do
-  pushStack fakeDecl
+  allocStackItem
   return [EVMPush (makeWord lit)]
 
 compileExpr (VarExpr pos ident) = do
   maybeDecl <- lookupSymbol ident
   case maybeDecl of
-    Nothing -> do compileError pos $ "Undefined identifier '" ++ ident ++ "'"
+    Nothing -> do compilerError pos $ "Undefined identifier '" ++ ident ++ "'"
                   return []
     Just decl -> if length (declArgs decl) > 0 
-                 then do compileError pos $
+                 then do compilerError pos $
                            "Symbol '" ++ ident ++ "' requires " ++
                            show (length (declArgs decl)) ++ " argument(s)"
                          return []
@@ -98,43 +155,49 @@ compileExpr (VarExpr pos ident) = do
                      Just off -> do pushStack decl
                                     return [EVMDup (off+1)]
 
+compileExpr (CallExpr pos ident args) = do
+  maybeDecl <- lookupSymbol ident
+  case maybeDecl of
+    Nothing -> do compilerError pos $ "Undefined identifier '" ++ ident ++ "'"
+                  return []
+    Just decl ->
+      do let arity = length (declArgs decl)
+         if arity /= length args
+           then do compilerError pos $
+                     "Function '" ++ ident ++ "' requires " ++
+                     show arity ++ " arguments"
+                   return []
+                
+           else do allocStackItem -- leave space for return address
+                   callCode <- compileCall decl args
+                   let callLength = codeLength callCode
+                   let lengthWord = makeWord (callLength + 2)
+                   return $
+                     [ EXTComment $ "call to " ++ declIdent decl,
+                       EVMPush lengthWord,
+                       EVMSimple PC,
+                       EVMSimple ADD,
+                       EXTComment "call args" ] ++ callCode
+                   
+
+  where compileCall :: Declaration -> [Expression] -> Compiler Code
+        compileCall decl args = do
+          argCodes <- mapM compileExpr args
+          let coda = [ EXTFuncAddr decl, EVMSimple JUMP, EVMSimple JUMPDEST,
+                       EXTComment "end of call sequence" ]
+          return $ foldr (++) coda argCodes
+          
 compileExpr (BinOpExpr op lhs rhs) = do
   lhsCode <- compileExpr lhs
   rhsCode <- compileExpr rhs
   popStack
   popStack
-  pushStack fakeDecl
+  allocStackItem
   return $ lhsCode ++ rhsCode ++ [EVMSimple ADD]
 
                       
   
 {-
-checkExpr :: Expression -> CompilerMonad DeclInfo ()
-
-checkExpr (LitExpr _ _) = return ()
-
-checkExpr (VarExpr pos ident) = do
-  maybeDecl <- lookupSymbol ident
-  case maybeDecl of
-    Nothing -> compileError pos $ "Undefined identifier '" ++ ident ++ "'"
-    Just decl -> if length (declArgs decl) > 0 
-                 then compileError pos $
-                      "Symbol '" ++ ident ++ "' requires " ++
-                      show (length (declArgs decl)) ++ " argument(s)"
-                 else return ()
-
-checkExpr (CallExpr pos ident args) = do
-  maybeDecl <- lookupSymbol ident
-  case maybeDecl of
-    Nothing -> compileError pos $ "Undefined identifier '" ++ ident ++ "'"
-    Just decl -> do let arity = length (declArgs decl)
-                    if arity /= length args
-                      then compileError pos $
-                           "Function '" ++ ident ++ "' requires " ++
-                           show arity ++ " arguments"
-                      else return ()
-                    mapM_ checkExpr args
-
 checkExpr (DefExpr decls body) = do
   enterScope
   checkDecls decls
