@@ -5,6 +5,7 @@ import Prelude hiding (EQ, GT, LT)
 import qualified Data.ByteString as BS
 import Data.Word
 import qualified Data.Array.Unboxed as A
+import Numeric (showHex)
 
 data LargeWord = LargeWord
                  { wordSize :: Int         	-- max. 32
@@ -103,6 +104,13 @@ code2bytes = foldr (++) [] . map instr2bytes
 
 codeLength :: EVMCode a -> Int
 codeLength = length . code2bytes 
+
+code2hexString :: EVMCode a -> String
+code2hexString = concat . (map instr2hex) . code2bytes
+  where instr2hex opcode =
+          case showHex opcode "" of
+            [digit] -> ['0', digit]
+            digits -> digits
 
 opcode2byteMap :: A.Array EVMOpcode Word8
 opcode2byteMap = A.array (STOP, SUICIDE) opcodeBytePairs
