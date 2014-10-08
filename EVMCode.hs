@@ -48,7 +48,7 @@ data EVMOpcode =
     POP |
     -- 0x53
     MLOAD | MSTORE | MSTORE8 | SLOAD | SSTORE | JUMP | JUMPI |
-    PC | MSIZE | GAS |
+    PC | MSIZE | GAS | JUMPDEST |
     -- 0x60
     -- PUSH | -- LargeWord |
     -- 0x80
@@ -58,8 +58,7 @@ data EVMOpcode =
     -- 0xf0
     CREATE | CALL | RETURN | POST | CALLSTATELESS |
     -- 0xff
-    SUICIDE |
-    JUMPDEST
+    SUICIDE 
   deriving (Show, Eq, Ord, A.Ix)
 
 -- instance A.Ix EVMOpcode where
@@ -136,13 +135,11 @@ byteOpcodePairs =
   [(0x50, POP)]
   ++
   zip [0x53 ..]
-  [MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS]
+  [MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST]
   ++
   zip [0xf0 ..]
   [CREATE, CALL, RETURN, POST, CALLSTATELESS]
   ++
   [(0xff, SUICIDE)]
-  ++
-  [(0xa0, JUMPDEST)]
 
   
