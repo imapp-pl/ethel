@@ -1,12 +1,12 @@
 module Compiler where
 
 import qualified Data.HashMap.Strict as HM
+import Data.List (mapAccumL)
 import Control.Monad (foldM, liftM)
 
 import CompilerState
 import EVMCode
 import Syntax
--- import qualified Stack
 
 type Code = EVMCode Declaration
 
@@ -41,38 +41,32 @@ compileProgram prog = do
   enterScope 
   
   -- compile top-level declarations and the main expression
-  compileDecls (decls prog)
-  mainDecl <- compileMain (mainExpr prog)
+  compiledDecls <- compileDecls (decls prog)
+  -- (mainDecl, mainCode) <- compileMain (mainExpr prog)
+  compiledMain <- compileMain (mainExpr prog)              
 
   -- Compute code offsets for each declaration:
-  -- First build a map of declaration to code offsets,
-  -- then use it to complete JUMP instructions while mergins code.
-  declOffsets <- foldM (\ dos@((d,o):_) decl ->
-                         do Just info <- getDeclInfo d 
-                            let size = codeLength (diCode info)
-                            return $ (decl,o+size):dos )
-                 [(mainDecl, 0)]
-                 (decls prog)
+  -- first build a map of declaration to code offsets,
+  -- then use it to complete JUMP instructions.
+  let (_,declOffsets) = mapAccumL (\ offset (decl, code) -> 
+                                       let codeSize = codeLength code 
+                                       in (offset + codeSize, (decl, offset)))
+                        0 
+                        (compiledMain : compiledDecls)
 
   -- complete addresses and merge code
   let decl2offset = HM.fromList declOffsets
-  completedCode <- foldM
-                   (\ codeList decl ->
-                     do Just info <- getDeclInfo decl
-                        let code = diCode info
-                            code' = map (rewriteJump decl2offset) code
-                        return $ code' : codeList)
-                   []
-                   (mainDecl : (decls prog))
-  
-  return $ concat $ reverse completedCode
+  let rewrittenCode = map (\ (decl,code) -> map (rewriteJump decl2offset) code)
+                      (compiledMain : compiledDecls)
+
+  return $ concat rewrittenCode
 
   where
     rewriteJump decl2offset (EXTFuncAddr decl) = EVMPush $ makeWord32 offset
-      where (Just offset) = HM.lookup decl decl2offset
+        where (Just offset) = HM.lookup decl decl2offset
     rewriteJump _ instr = instr
 
-compileMain :: Expression -> Compiler Declaration
+compileMain :: Expression -> Compiler (Declaration, Code)
 compileMain exp = do
   code <- compileExpr exp
   -- store the result in memory and generate the return instruction
@@ -81,31 +75,35 @@ compileMain exp = do
                  , EVMPush (makeWord 32), EVMPush (makeWord 0)
                  , EVMSimple RETURN ]
   let mainDecl = makeDecl (pos exp) "main" [] exp
-  setDeclInfo mainDecl (DeclInfo mainCode)
-  return mainDecl
+  return (mainDecl, mainCode)
 
-compileDecls :: [Declaration] -> Compiler ()
+compileDecls :: [Declaration] -> Compiler [(Declaration, Code)]
 compileDecls decls = do
   mapM_ insertDecl decls
-  mapM_ compileDecl decls
+  codes <- mapM compileDecl decls
+  return $ zip decls codes
 
   where insertDecl decl = insertOrReport (declIdent decl) decl
 
-compileDecl :: Declaration -> Compiler ()
+compileDecl :: Declaration -> Compiler Code
 compileDecl decl = do
   global <- onTopLevel
   if declArgs decl == []  
-    then if global then compilerError (declPos decl) $
-                        "Global vars not supported yet"
-         else compileLocalVarDecl decl
-    else if not global then compilerError (declPos decl) $
-                         "Local functions are not supported yet"
-         else compileFuncDecl decl
+  then if global 
+       then do compilerError (declPos decl) $
+                   "Global vars not supported yet"
+               return []
+       else compileLocalVarDecl decl
+  else if not global 
+       then do compilerError (declPos decl) $
+                   "Local functions are not supported yet"
+               return []
+       else compileFuncDecl decl
 
-compileLocalVarDecl :: Declaration -> Compiler ()
+compileLocalVarDecl :: Declaration -> Compiler Code
 compileLocalVarDecl decl = error "Not implemented yet!"
 
-compileFuncDecl :: Declaration -> Compiler ()
+compileFuncDecl :: Declaration -> Compiler Code
 compileFuncDecl decl = do
   enterScope
   clearStack
@@ -124,13 +122,12 @@ compileFuncDecl decl = do
              ++ [ EVMSimple JUMP
                 , EXTComment $ "END func " ++ declIdent decl]
   leaveScope
-  -- update function info
-  setDeclInfo decl (DeclInfo code)
+  return code
   
-  where declareArg pos arg = do
-          let argDecl = makeArgDecl pos arg
-          insertOrReport arg argDecl
-          return argDecl
+    where declareArg pos arg = 
+              do let argDecl = makeArgDecl pos arg
+                 insertOrReport arg argDecl
+                 return argDecl
 
 compileExpr :: Expression -> Compiler Code 
 
@@ -148,12 +145,11 @@ compileExpr (VarExpr pos ident) = do
                            "Symbol '" ++ ident ++ "' requires " ++
                            show (length (declArgs decl)) ++ " argument(s)"
                          return []
-                 else do
-                   maybeOff <- stackOffset decl
-                   case maybeOff of
-                     Nothing -> error $ "Global vars not supported yet"
-                     Just off -> do pushStack decl
-                                    return [EVMDup (off+1)]
+                 else do maybeOff <- stackOffset decl
+                         case maybeOff of
+                           Nothing -> error $ "Global vars not supported yet"
+                           Just off -> do pushStack decl
+                                          return [EVMDup (off+1)]
 
 compileExpr (CallExpr pos ident args) = do
   maybeDecl <- lookupSymbol ident
@@ -163,23 +159,22 @@ compileExpr (CallExpr pos ident args) = do
     Just decl ->
       do let arity = length (declArgs decl)
          if arity /= length args
-           then do compilerError pos $
-                     "Function '" ++ ident ++ "' requires " ++
-                     show arity ++ " arguments"
-                   return []
+         then do compilerError pos $
+                   "Function '" ++ ident ++ "' requires " ++
+                   show arity ++ " arguments"
+                 return []
                 
-           else do allocStackItem -- leave space for return address
-                   callCode <- compileCall decl args
-                   let callLength = codeLength callCode
-                   let lengthWord = makeWord (callLength + 2)
-                   return $
-                     [ EXTComment $ "call to " ++ declIdent decl,
-                       EVMPush lengthWord,
-                       EVMSimple PC,
-                       EVMSimple ADD,
-                       EXTComment "call args" ] ++ callCode
+         else do allocStackItem -- leave space for return address
+                 callCode <- compileCall decl args
+                 let callLength = codeLength callCode
+                 let lengthWord = makeWord (callLength + 2)
+                 return $
+                   [ EXTComment $ "call to " ++ declIdent decl,
+                     EVMPush lengthWord,
+                     EVMSimple PC,
+                     EVMSimple ADD,
+                     EXTComment "call args" ] ++ callCode
                    
-
   where compileCall :: Declaration -> [Expression] -> Compiler Code
         compileCall decl args = do
           argCodes <- mapM compileExpr args

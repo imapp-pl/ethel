@@ -16,7 +16,6 @@ data CompilerState info =
   CompilerState
   { csErrorMsgs :: [ErrorMsg]  
   , csScopes :: [SymbolTable]                 -- stack of scopes
-  , csDeclInfo :: DeclTable info              -- info for each toplevel decl
   , csLocalStack :: Stack.Stack S.Declaration -- tracks local stack in functions
   }
   
@@ -34,20 +33,10 @@ emptyState :: CompilerState info
 emptyState = CompilerState
              { csErrorMsgs = []
              , csScopes = [] 
-             , csDeclInfo = HM.empty       
              , csLocalStack = Stack.empty  
              }
 
 type CompilerMonad info = State (CompilerState info)
-
-setDeclInfo :: S.Declaration -> info -> CompilerMonad info ()
-setDeclInfo decl info = 
-    modify $ \ cs -> cs { csDeclInfo = HM.insert decl info (csDeclInfo cs) }
-
-getDeclInfo :: S.Declaration -> CompilerMonad info (Maybe info)
-getDeclInfo decl = do
-  infos <- gets csDeclInfo
-  return $ HM.lookup decl infos
 
 enterScope :: CompilerMonad info ()
 enterScope = do
