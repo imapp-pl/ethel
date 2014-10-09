@@ -1,5 +1,6 @@
 module Compiler where
 
+import Prelude hiding (EQ, LT, GT)
 import qualified Data.HashMap.Strict as HM
 import Data.List (mapAccumL)
 import Control.Monad (foldM, liftM)
@@ -49,22 +50,32 @@ compileProgram prog = do
   -- first build a map of declaration to code offsets,
   -- then use it to complete JUMP instructions.
   let (_,declOffsets) = mapAccumL (\ offset (decl, code) -> 
-                                       let codeSize = codeLength code 
-                                       in (offset + codeSize, (decl, offset)))
+                                       let len = codeSize code 
+                                       in (offset + len
+                                          , (decl, offset))
+                                  )
                         0 
                         (compiledMain : compiledDecls)
 
   -- complete addresses and merge code
   let decl2offset = HM.fromList declOffsets
-  let rewrittenCode = map (\ (decl,code) -> map (rewriteJump decl2offset) code)
-                      (compiledMain : compiledDecls)
-
-  return $ concat rewrittenCode
+      mergedCode = concat $ map snd (compiledMain : compiledDecls)
+      rewrittenCode1 = map (rewriteFuncAddr decl2offset) mergedCode
+      (len,rewrittenCode2) = mapAccumL (\ pos instr -> 
+                                            (pos + instrSize instr
+                                            , rewriteRelAddr pos instr)
+                                       )
+                             0
+                             rewrittenCode1
+  return rewrittenCode2
 
   where
-    rewriteJump decl2offset (EXTFuncAddr decl) = EVMPush $ makeWord32 offset
+    rewriteFuncAddr decl2offset (EXTFuncAddr decl) = EVMPush $ makeWord32 offset
         where (Just offset) = HM.lookup decl decl2offset
-    rewriteJump _ instr = instr
+    rewriteFuncAddr _ instr = instr
+
+    rewriteRelAddr pos (EXTRelAddr offset) = EVMPush $ makeWord32 (pos + offset)
+    rewriteRelAddr _ instr = instr
 
 compileMain :: Expression -> Compiler (Declaration, Code)
 compileMain exp = do
@@ -117,8 +128,7 @@ compileFuncDecl decl = do
   let code = [EXTComment $ "BEGIN func " ++ declIdent decl]
              ++ bodyCode
              -- move return value under the return address
-             -- ++ [EVMSwap (1 + declArity decl)] 
-             ++ [EVMSwap (stackSz + 1)]
+             ++ [EVMSwap stackSz]
              -- pop function args from the stack
              -- ++ replicate (length $ declArgs decl) (EVMSimple POP)
              ++ replicate (stackSz - 1) (EVMSimple POP)
@@ -170,13 +180,14 @@ compileExpr (CallExpr pos ident args) = do
                 
          else do allocStackItem -- leave space for return address
                  callCode <- compileCall decl args
-                 let callLength = codeLength callCode
+                 let callLength = codeSize callCode
                  let lengthWord = makeWord (callLength + 1)
                  return $
                    [ EXTComment $ "call to " ++ declIdent decl,
-                     EVMPush lengthWord,
-                     EVMSimple PC,
-                     EVMSimple ADD,
+                     EXTRelAddr (4 + callLength),
+                     --EVMPush lengthWord,
+                     --EVMSimple PC,
+                     --EVMSimple ADD,
                      EXTComment "call args" ] ++ callCode
                    
   where compileCall :: Declaration -> [Expression] -> Compiler Code
@@ -194,6 +205,18 @@ compileExpr (LetExpr decl body) = do
   pushStack decl
   bodyCode <- compileExpr body
   return $ declCode ++ bodyCode
+
+compileExpr (IfExpr pos cexp texp fexp) = do
+  condCode <- compileExpr cexp
+  popStack
+  thenCode <- compileExpr texp
+  popStack
+  elseCode <- compileExpr fexp
+  return $ condCode ++
+           [EXTRelAddr (12 + codeSize elseCode), EVMSimple JUMPI] ++
+           elseCode ++
+           [EXTRelAddr (6 + codeSize thenCode), EVMSimple JUMP] ++
+           thenCode
           
 compileExpr (BinOpExpr op lhs rhs) = do
   lhsCode <- compileExpr lhs
@@ -201,9 +224,29 @@ compileExpr (BinOpExpr op lhs rhs) = do
   popStack
   popStack
   allocStackItem
-  return $ lhsCode ++ rhsCode ++ [EVMSimple ADD]
+  return $ lhsCode ++ rhsCode ++ map EVMSimple (opcode op)
 
-                      
+      where opcode "+" = [ADD]
+            opcode "-" = [SUB]                  
+            opcode "*" = [MUL]
+            opcode "/" = [DIV]
+            opcode "%" = [MOD]
+            opcode "==" = [EQ]
+            opcode "<>" = [EQ,NOT]
+            opcode "<"  = [LT]
+            opcode "<=" = [GT,NOT]
+            opcode ">"  = [GT]
+            opcode ">=" = [LT,NOT]
+
+compileExpr (UnOpExpr _ op arg) = do 
+  argCode <- compileExpr arg
+  popStack
+  allocStackItem
+  return $ argCode ++ map EVMSimple (opcode op)
+
+      where opcode "+" = []
+            opcode "-" = [NEG]
+            opcode "!" = [NOT]
   
 {-
 checkExpr (DefExpr decls body) = do

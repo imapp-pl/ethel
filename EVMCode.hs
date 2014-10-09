@@ -3,6 +3,7 @@ module EVMCode where
 
 import Prelude hiding (EQ, GT, LT)
 import qualified Data.ByteString as BS
+import Data.List (mapAccumL)
 import Data.Word
 import qualified Data.Array.Unboxed as A
 import Numeric (showHex)
@@ -72,7 +73,8 @@ data EVMInstr a = EVMSimple EVMOpcode
                 | EVMDup Int
                 | EVMSwap Int
                 | EXTComment String
-                | EXTFuncAddr a
+                | EXTFuncAddr a     -- a function address
+                | EXTRelAddr Int    -- an address relative to current PC
                 deriving (Eq)
 
 instance Show a => Show (EVMInstr a) where
@@ -83,11 +85,33 @@ instance Show a => Show (EVMInstr a) where
   show (EVMSwap n) = "SWAP" ++ show n
   show (EXTComment s) = ";; " ++ s
   show (EXTFuncAddr a) = "ADDROF " ++ show a
+  show (EXTRelAddr n) = "OFFSET " ++ show n
 
 type EVMCode a = [EVMInstr a]
 
 instance Show a => Show (EVMCode a) where
   show code = foldr (\ i s -> i ++ '\n':s) "" (map show code)
+
+showPos :: (Show a) => EVMCode a -> String
+showPos code = concat strings
+    where (_, strings) = mapAccumL (\ pos instr -> 
+                                       ( pos + instrSize instr
+                                       , shows pos $ ":\t " 
+                                                   ++ shows instr "\n" )
+                                   )
+                         0 
+                         code
+
+instrSize :: EVMInstr a -> Int
+instrSize (EVMPush lw) = 1 + wordSize lw
+instrSize (EXTComment _) = 0
+instrSize (EXTFuncAddr _) = 5
+instrSize (EXTRelAddr _) = 5
+instrSize _ = 1
+
+codeSize :: EVMCode a -> Int
+codeSize = sum . map instrSize
+
 
 instr2bytes :: EVMInstr a -> [Word8]
 instr2bytes (EVMPush lw) = (fromIntegral (0x60 - 1 + wordSize lw))
@@ -97,15 +121,12 @@ instr2bytes (EVMSwap n)  = [fromIntegral (0x90 - 1 + n)]
 instr2bytes (EVMSimple op) = [fromIntegral (opcode2byteMap A.! op)]
 
 instr2bytes (EXTComment s) = []
-instr2bytes (EXTFuncAddr a) = instr2bytes (EVMPush zero4)
-                              where zero4 = LargeWord 4
-                                            (replicate 4 (fromIntegral 0))
+instr2bytes (EXTFuncAddr a) = replicate 5 (fromIntegral 0)
+instr2bytes (EXTRelAddr n) = replicate 5 (fromIntegral 0)
 
 code2bytes :: EVMCode a -> [Word8]
 code2bytes = foldr (++) [] . map instr2bytes
 
-codeLength :: EVMCode a -> Int
-codeLength = length . code2bytes 
 
 code2hexString :: EVMCode a -> String
 code2hexString = concat . (map instr2hex) . code2bytes

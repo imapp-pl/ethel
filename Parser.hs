@@ -17,12 +17,13 @@ languageDef = Lang.emptyDef
               , Tok.nestedComments = True
               , Tok.identStart   = letter
               , Tok.identLetter  = alphaNum <|> oneOf "_'"
-              , Tok.opStart      = oneOf "+-*=()<>"
+              , Tok.opStart      = oneOf "+-*/=<>&|!"
               , Tok.opLetter     = Tok.opStart languageDef
               , Tok.reservedNames = ["let", "in", "return"
                                     , "if", "then", "else"]
               , Tok.reservedOpNames = ["+", "-", "*", "/", "=",
-                                       "==", "<>", "<", "<=", ">", ">="]
+                                       "==", "<>", "<", "<=", ">", ">=",
+                                       "&&", "||", "!"]
               , Tok.caseSensitive = True
               }
 
@@ -87,7 +88,7 @@ ifExpression = do
 
 numericExpression :: Parser Expression
 numericExpression = E.buildExpressionParser table primaryExpression
-  where table = [ [ prefix "-", prefix "+" ]
+  where table = [ [ prefix "-", prefix "+", prefix "!" ]
                 , [ binary "*", binary "/" ]
                 , [ binary "+", binary "-" ]
                 , [ binary "==", binary "<>",
