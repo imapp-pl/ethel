@@ -49,7 +49,7 @@ inParens = Tok.parens lexer
 program :: Parser Program
 program = do
   Tok.whiteSpace lexer
-  decls <- many1 declaration
+  decls <- many declaration
   keyword "return"
   exp <- expression
   return $ Program decls exp
