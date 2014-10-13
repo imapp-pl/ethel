@@ -25,12 +25,15 @@ makeWord i = LargeWord (length bs) bs
                 (0, mod) -> fromIntegral mod : ws
                 (j, mod) -> i2bs (fromIntegral mod : ws) j
 
-makeWord32 :: (Integral i) => i -> LargeWord
-makeWord32 i = LargeWord 4 paddedBytes
+makeNWord :: (Integral i) => Int -> i -> LargeWord
+makeNWord sz i = LargeWord sz paddedBytes
     where paddedBytes = 
-              case makeWord (toInteger i `mod` 2^32) of
+              case makeWord (toInteger i `mod` 2^(sz*8)) of
                 LargeWord size bytes -> 
-                    (replicate (4-size) (fromInteger 0)) ++ bytes
+                    (replicate (sz - size) (fromInteger 0)) ++ bytes
+
+makeWord32 = makeNWord 4
+makeWord16 = makeNWord 2
 
 
 data EVMOpcode =
@@ -65,70 +68,69 @@ data EVMOpcode =
     SUICIDE 
   deriving (Show, Eq, Ord, A.Ix)
 
--- instance A.Ix EVMOpcode where
-  
 
-data EVMInstr a = EVMSimple EVMOpcode
-                | EVMPush LargeWord
-                | EVMDup Int
-                | EVMSwap Int
-                | EXTComment String
-                | EXTFuncAddr a     -- a function address
-                | EXTRelAddr Int    -- an address relative to current PC
+type Label = String
+data EVMInstr = EVMSimple EVMOpcode
+              | EVMPush LargeWord
+              | EVMDup Int
+              | EVMSwap Int
+              | EXTComment String
+              | EXTLabel Label
+              | EXTLabelAddr Label
                 deriving (Eq)
 
-instance Show a => Show (EVMInstr a) where
+instance Show EVMInstr where
   show (EVMSimple op) = show op
   show (EVMPush word) = "PUSH" ++ show (wordSize word) ++
                         " " ++ show (wordBytes word)
   show (EVMDup n) = "DUP" ++ show n
   show (EVMSwap n) = "SWAP" ++ show n
   show (EXTComment s) = ";; " ++ s
-  show (EXTFuncAddr a) = "ADDROF " ++ show a
-  show (EXTRelAddr n) = "OFFSET " ++ show n
+  show (EXTLabel l) = l ++ ":"
+  show (EXTLabelAddr l) = "[" ++ l ++ "]"
 
-type EVMCode a = [EVMInstr a]
+type EVMCode = [EVMInstr]
 
-instance Show a => Show (EVMCode a) where
+instance Show EVMCode where
   show code = foldr (\ i s -> i ++ '\n':s) "" (map show code)
 
-showPos :: (Show a) => EVMCode a -> String
+showPos :: EVMCode -> String
 showPos code = concat strings
     where (_, strings) = mapAccumL (\ pos instr -> 
-                                       ( pos + instrSize instr
-                                       , shows pos $ ":\t " 
-                                                   ++ shows instr "\n" )
-                                   )
-                         0 
-                         code
+                                        ( pos + instrSize 0 instr
+                                        , instrAt pos instr ))
+                         0 code
+          instrAt pos (EXTLabel l) = l ++ ":\n"
+          instrAt pos (EXTComment s) = ";; " ++ s ++ "\n"
+          instrAt pos instr = shows pos $ ":\t" ++ shows instr "\n"
 
-instrSize :: EVMInstr a -> Int
-instrSize (EVMPush lw) = 1 + wordSize lw
-instrSize (EXTComment _) = 0
-instrSize (EXTFuncAddr _) = 5
-instrSize (EXTRelAddr _) = 5
-instrSize _ = 1
+instrSize :: Int -> EVMInstr -> Int
+instrSize _ (EVMPush lw) = 1 + wordSize lw
+instrSize _ (EXTComment _) = 0
+instrSize _ (EXTLabel _) = 0
+instrSize labelSize (EXTLabelAddr _) = labelSize + 1 -- 1 added for PUSH
+instrSize _ _ = 1
 
-codeSize :: EVMCode a -> Int
-codeSize = sum . map instrSize
+codeSize :: Int -> EVMCode -> Int
+codeSize labelSize = sum . map (instrSize labelSize)
 
 
-instr2bytes :: EVMInstr a -> [Word8]
+instr2bytes :: EVMInstr -> [Word8]
 instr2bytes (EVMPush lw) = (fromIntegral (0x60 - 1 + wordSize lw))
                            : wordBytes lw
 instr2bytes (EVMDup n)   = [fromIntegral (0x80 - 1 + n)]
 instr2bytes (EVMSwap n)  = [fromIntegral (0x90 - 1 + n)]
 instr2bytes (EVMSimple op) = [fromIntegral (opcode2byteMap A.! op)]
 
-instr2bytes (EXTComment s) = []
-instr2bytes (EXTFuncAddr a) = replicate 5 (fromIntegral 0)
-instr2bytes (EXTRelAddr n) = replicate 5 (fromIntegral 0)
+instr2bytes (EXTComment _) = []
+instr2bytes (EXTLabel _) = []
+instr2bytes (EXTLabelAddr l) = error "EXTLabelAddr has undefined byte representation!"
 
-code2bytes :: EVMCode a -> [Word8]
+code2bytes :: EVMCode -> [Word8]
 code2bytes = foldr (++) [] . map instr2bytes
 
 
-code2hexString :: EVMCode a -> String
+code2hexString :: EVMCode -> String
 code2hexString = concat . (map instr2hex) . code2bytes
   where instr2hex opcode =
           case showHex opcode "" of

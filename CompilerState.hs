@@ -17,6 +17,7 @@ data CompilerState info =
   { csErrorMsgs :: [ErrorMsg]  
   , csScopes :: [SymbolTable]                 -- stack of scopes
   , csLocalStack :: Stack.Stack S.Declaration -- tracks local stack in functions
+  , csUnique :: Int
   }
   
 instance H.Hashable Pos.SourcePos where
@@ -34,6 +35,7 @@ emptyState = CompilerState
              { csErrorMsgs = []
              , csScopes = [] 
              , csLocalStack = Stack.empty  
+             , csUnique = 0
              }
 
 type CompilerMonad info = State (CompilerState info)
@@ -110,3 +112,12 @@ hasErrors = do
   msgs <- gets csErrorMsgs
   return $ msgs /= []
 
+
+-- UNIQUE NAMES ----------------------------------------------------------
+
+uniqueName :: String -> CompilerMonad info String
+uniqueName prefix = do
+  cs <- get 
+  let unique = csUnique cs
+  put $ cs { csUnique = unique + 1 }
+  return $ prefix ++ "." ++ show unique

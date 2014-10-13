@@ -9,10 +9,9 @@ import CompilerState
 import EVMCode
 import Syntax
 
-type Code = EVMCode Declaration
 
 data DeclInfo = DeclInfo 
-                { diCode :: Code }
+                { diCode :: EVMCode }
 
 instance Show DeclInfo where
   show = show . diCode 
@@ -36,7 +35,7 @@ insertOrReport ident decl = do
 
     
 
-compileProgram :: Program -> Compiler Code
+compileProgram :: Program -> Compiler (Int, EVMCode)
 compileProgram prog = do
   -- enter top-level
   enterScope 
@@ -46,38 +45,47 @@ compileProgram prog = do
   -- (mainDecl, mainCode) <- compileMain (mainExpr prog)
   compiledMain <- compileMain (mainExpr prog)              
 
-  -- Compute code offsets for each declaration:
-  -- first build a map of declaration to code offsets,
-  -- then use it to complete JUMP instructions.
-  let (_,declOffsets) = mapAccumL (\ offset (decl, code) -> 
-                                       let len = codeSize code 
-                                       in (offset + len
-                                          , (decl, offset))
-                                  )
-                        0 
-                        (compiledMain : compiledDecls)
+  let allCode = foldr (++) [] (map snd (compiledMain : compiledDecls))
+                
+      labelSize = computeLabelSize allCode
 
-  -- complete addresses and merge code
-  let decl2offset = HM.fromList declOffsets
-      mergedCode = concat $ map snd (compiledMain : compiledDecls)
-      rewrittenCode1 = map (rewriteFuncAddr decl2offset) mergedCode
-      (len,rewrittenCode2) = mapAccumL (\ pos instr -> 
-                                            (pos + instrSize instr
-                                            , rewriteRelAddr pos instr)
-                                       )
-                             0
-                             rewrittenCode1
-  return rewrittenCode2
+      (_, posCode) = mapAccumL (\ pos instr -> 
+                                    let sz = instrSize labelSize instr 
+                                    in  (pos + sz, (pos, instr)))
+                     0 allCode
 
-  where
-    rewriteFuncAddr decl2offset (EXTFuncAddr decl) = EVMPush $ makeWord32 offset
-        where (Just offset) = HM.lookup decl decl2offset
-    rewriteFuncAddr _ instr = instr
+      posLabels = map (\ (pos, EXTLabel l) -> (l, pos) )
+                      $ filter isLabel posCode
 
-    rewriteRelAddr pos (EXTRelAddr offset) = EVMPush $ makeWord32 (pos + offset)
-    rewriteRelAddr _ instr = instr
+      label2pos = HM.fromList posLabels
 
-compileMain :: Expression -> Compiler (Declaration, Code)
+      completedCode = map (replaceJumpLabel labelSize label2pos) allCode 
+
+  return (labelSize, completedCode)
+
+  where isLabel (_, EXTLabel _) = True
+        isLabel _ = False
+
+        replaceJumpLabel labelSize label2pos (EXTLabelAddr l) = 
+            EVMPush $ makeNWord labelSize pos
+            where --(Just pos) = HM.lookup l label2pos 
+              pos = case HM.lookup l label2pos of
+                      (Just p) -> p
+                      Nothing -> error $ "cannot resolve label " ++ l
+        replaceJumpLabel _ _ instr = instr
+
+computeLabelSize :: EVMCode -> Int
+computeLabelSize code = labelSize 1
+    where evmCodeSize = codeSize 0 code
+          labelAddrCnt = length $ filter isLabelAddrInstr code
+          
+          labelSize n = if evmCodeSize + (labelAddrCnt * n) < 2^(n * 8)
+                        then n else labelSize (n+1)
+
+          isLabelAddrInstr (EXTLabelAddr _) = True
+          isLabelAddrInstr _ = False
+
+compileMain :: Expression -> Compiler (Declaration, EVMCode)
 compileMain exp = do
   code <- compileExpr exp
   -- store the result in memory and generate the return instruction
@@ -88,7 +96,7 @@ compileMain exp = do
   let mainDecl = makeDecl (pos exp) "main" [] exp
   return (mainDecl, mainCode)
 
-compileDecls :: [Declaration] -> Compiler [(Declaration, Code)]
+compileDecls :: [Declaration] -> Compiler [(Declaration, EVMCode)]
 compileDecls decls = do
   mapM_ insertDecl decls
   codes <- mapM compileDecl decls
@@ -96,7 +104,7 @@ compileDecls decls = do
 
   where insertDecl decl = insertOrReport (declIdent decl) decl
 
-compileDecl :: Declaration -> Compiler Code
+compileDecl :: Declaration -> Compiler EVMCode
 compileDecl decl = do
   global <- onTopLevel
   if declArgs decl == []  
@@ -111,11 +119,11 @@ compileDecl decl = do
                return []
        else compileFuncDecl decl
 
-compileLocalVarDecl :: Declaration -> Compiler Code
+compileLocalVarDecl :: Declaration -> Compiler EVMCode
 compileLocalVarDecl decl = error "Not implemented yet!"
 
 
-compileFuncDecl :: Declaration -> Compiler Code
+compileFuncDecl :: Declaration -> Compiler EVMCode
 compileFuncDecl decl = do
   enterScope
   clearStack
@@ -125,7 +133,9 @@ compileFuncDecl decl = do
   mapM_ pushStack argDecls  
   bodyCode <- compileExpr (declBody decl)
   stackSz <- stackSize
-  let code = [EXTComment $ "BEGIN func " ++ declIdent decl]
+  let funcLabel = "func." ++ declIdent decl
+  let code = [ EXTComment $ "BEGIN func " ++ declIdent decl
+             , EXTLabel $ funcLabel ]
              ++ bodyCode
              -- move return value under the return address
              ++ [EVMSwap stackSz]
@@ -143,7 +153,7 @@ compileFuncDecl decl = do
                  insertOrReport arg argDecl
                  return argDecl
 
-compileExpr :: Expression -> Compiler Code 
+compileExpr :: Expression -> Compiler EVMCode 
 
 compileExpr (LitExpr pos lit) = do
   allocStackItem
@@ -179,24 +189,19 @@ compileExpr (CallExpr pos ident args) = do
                  return []
                 
          else do allocStackItem -- leave space for return address
-                 callCode <- compileCall decl args
-                 let callLength = codeSize callCode
-                 let lengthWord = makeWord (callLength + 1)
+                 argsCode <- mapM compileExpr args
+                 retLabel <- uniqueName "return" 
+                 let funcLabel = "func." ++ declIdent decl
                  return $
                    [ EXTComment $ "call to " ++ declIdent decl,
-                     EXTRelAddr (4 + callLength),
-                     --EVMPush lengthWord,
-                     --EVMSimple PC,
-                     --EVMSimple ADD,
-                     EXTComment "call args" ] ++ callCode
+                     EXTLabelAddr retLabel ]
+                   ++ concat argsCode ++
+                   [ EXTLabelAddr funcLabel, 
+                     EVMSimple JUMP,
+                     EVMSimple JUMPDEST,
+                     EXTLabel retLabel,
+                     EXTComment "end of call sequence" ]
                    
-  where compileCall :: Declaration -> [Expression] -> Compiler Code
-        compileCall decl args = do
-          argCodes <- mapM compileExpr args
-          let coda = [ EXTFuncAddr decl, EVMSimple JUMP, EVMSimple JUMPDEST,
-                       EXTComment "end of call sequence" ]
-          return $ foldr (++) coda argCodes
-
 compileExpr (LetExpr decl body) = do
   insertOrReport (declIdent decl) decl
   declCode <- compileExpr (declBody decl)
@@ -212,11 +217,14 @@ compileExpr (IfExpr pos cexp texp fexp) = do
   thenCode <- compileExpr texp
   popStack
   elseCode <- compileExpr fexp
+  thenLabel <- uniqueName "then"
+  fiLabel <- uniqueName "fi"
   return $ condCode ++
-           [EXTRelAddr (12 + codeSize elseCode), EVMSimple JUMPI] ++
-           elseCode ++
-           [EXTRelAddr (6 + codeSize thenCode), EVMSimple JUMP] ++
-           thenCode
+             [EXTLabelAddr thenLabel, EVMSimple JUMPI] ++
+             elseCode ++
+             [EXTLabelAddr fiLabel, EVMSimple JUMP, EXTLabel thenLabel] ++
+             thenCode ++
+             [EXTLabel fiLabel]
           
 compileExpr (BinOpExpr op lhs rhs) = do
   lhsCode <- compileExpr lhs
