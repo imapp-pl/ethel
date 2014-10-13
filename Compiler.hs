@@ -137,11 +137,10 @@ compileFuncDecl decl = do
   let code = [ EXTComment $ "BEGIN func " ++ declIdent decl
              , EXTLabel $ funcLabel ]
              ++ bodyCode
-             -- move return value under the return address
-             ++ [EVMSwap stackSz]
              -- pop function args from the stack
-             -- ++ replicate (length $ declArgs decl) (EVMSimple POP)
-             ++ replicate (stackSz - 1) (EVMSimple POP)
+             ++ concat (replicate (stackSz - 1) [EVMSwap 1, EVMSimple POP])
+             -- move return value under the return address
+             ++ [EVMSwap 1]
              -- return to caller
              ++ [ EVMSimple JUMP
                 , EXTComment $ "END func " ++ declIdent decl]
@@ -198,8 +197,8 @@ compileExpr (CallExpr pos ident args) = do
                    ++ concat argsCode ++
                    [ EXTLabelAddr funcLabel, 
                      EVMSimple JUMP,
-                     EVMSimple JUMPDEST,
                      EXTLabel retLabel,
+                     EVMSimple JUMPDEST,
                      EXTComment "end of call sequence" ]
                    
 compileExpr (LetExpr decl body) = do
