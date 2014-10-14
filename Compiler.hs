@@ -265,10 +265,12 @@ compileExpr (NewExpr _ sizeExpr) = do
   popStack
   return $ 
     [ EVMPush (makeWord 0)
-    , EVMSimple MLOAD
-    , EVMDup 1 ]
+    , EVMSimple MLOAD ]
     ++ sizeCode ++
-    [ EVMSimple ADD
+    [ EVMPush (makeWord 32)
+    , EVMSimple MUL
+    , EVMSimple ADD
+    , EVMDup 1
     , EVMPush (makeWord 0)
     , EVMSimple MSTORE ]
   

@@ -15,7 +15,7 @@ languageDef = Lang.emptyDef
               , Tok.commentEnd   = "*/"
               , Tok.commentLine  = "//"
               , Tok.nestedComments = True
-              , Tok.identStart   = letter
+              , Tok.identStart   = letter <|> oneOf "_'"
               , Tok.identLetter  = alphaNum <|> oneOf "_'"
               , Tok.opStart      = oneOf "+-*/=<>&|!:"
               , Tok.opLetter     = Tok.opStart languageDef
