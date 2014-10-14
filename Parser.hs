@@ -17,13 +17,15 @@ languageDef = Lang.emptyDef
               , Tok.nestedComments = True
               , Tok.identStart   = letter
               , Tok.identLetter  = alphaNum <|> oneOf "_'"
-              , Tok.opStart      = oneOf "+-*/=<>&|!"
+              , Tok.opStart      = oneOf "+-*/=<>&|!:"
               , Tok.opLetter     = Tok.opStart languageDef
               , Tok.reservedNames = ["let", "in", "return"
-                                    , "if", "then", "else"]
+                                    , "if", "then", "else"
+                                    , "new"]
               , Tok.reservedOpNames = ["+", "-", "*", "/", "=",
                                        "==", "<>", "<", "<=", ">", ">=",
-                                       "&&", "||", "!"]
+                                       "&&", "||", "!", 
+                                       ":="]
               , Tok.caseSensitive = True
               }
 
@@ -87,13 +89,15 @@ ifExpression = do
   return $ IfExpr pos condExpr thenExpr elseExpr
 
 numericExpression :: Parser Expression
-numericExpression = E.buildExpressionParser table primaryExpression
-  where table = [ [ prefix "-", prefix "+", prefix "!" ]
+numericExpression = E.buildExpressionParser table (primaryExpression False)
+  where table = [ [ prefix "-", prefix "+", prefix "!", prefix "*" ]
                 , [ binary "*", binary "/" ]
                 , [ binary "+", binary "-" ]
                 , [ binary "==", binary "<>",
                     binary "<", binary "<=",
-                    binary ">", binary ">=" ]
+                    binary ">", binary ">=",
+                    assign
+                  ]
                 ]
         prefix op = E.Prefix $ do { operator op;
                                     pos <- getPosition;
@@ -101,6 +105,9 @@ numericExpression = E.buildExpressionParser table primaryExpression
 
         binary op = E.Infix ( do { operator op; return $ BinOpExpr op } )
                     E.AssocLeft
+
+        assign = E.Infix ( do { operator ":="; return AssignExpr } )
+                 E.AssocRight
 
 {-
 primaryExpression :: Parser Expression
@@ -113,23 +120,17 @@ primaryExpression = do
     _  -> CallExpr func args
 -}
 
-primaryExpression :: Parser Expression
-primaryExpression = 
-  callExpression <|> atomicExpression
-
-atomicExpression :: Parser Expression
-atomicExpression = literalExpression
-                   <|> varExpression
-                   <|> inParens expression
-
-callExpression :: Parser Expression
-callExpression = do
-  pos <- getPosition
-  name <- identifier
-  args <- many atomicExpression
-  return $ case args of
-    [] -> VarExpr pos name
-    _  -> CallExpr pos name args
+primaryExpression :: Bool -> Parser Expression
+primaryExpression isArg = 
+    literalExpression <|> 
+    inParens expression <|>    
+    newExpression <|>
+    do pos <- getPosition
+       ident <- identifier
+       args <- many (primaryExpression True)
+       case args of 
+         [] -> return $ VarExpr pos ident
+         exps -> return $ CallExpr pos ident exps
 
 literalExpression :: Parser Expression
 literalExpression = do
@@ -137,11 +138,13 @@ literalExpression = do
   num <- literal
   return $ LitExpr pos num
 
-varExpression :: Parser Expression
-varExpression = do
+newExpression :: Parser Expression
+newExpression = do
   pos <- getPosition
-  name <- identifier
-  return $ VarExpr pos name
+  keyword "new"
+  sizeExpr <- optionMaybe $ Tok.brackets lexer expression
+  return $ NewExpr pos sizeExpr
+
 
 
 parseString input =

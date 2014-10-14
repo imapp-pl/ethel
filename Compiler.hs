@@ -191,6 +191,7 @@ compileExpr (CallExpr pos ident args) = do
                  argsCode <- mapM compileExpr args
                  retLabel <- uniqueName "return" 
                  let funcLabel = "func." ++ declIdent decl
+                 popStack       -- the callee pops the return address 
                  return $
                    [ EXTComment $ "call to " ++ declIdent decl,
                      EXTLabelAddr retLabel ]
@@ -254,7 +255,41 @@ compileExpr (UnOpExpr _ op arg) = do
       where opcode "+" = []
             opcode "-" = [NEG]
             opcode "!" = [NOT]
+            opcode "*" = [MLOAD]
+
+compileExpr (NewExpr _ sizeExpr) = do
+  allocStackItem
+  allocStackItem
+  sizeCode <- compileSizeExpr
+  popStack
+  popStack
+  return $ 
+    [ EVMPush (makeWord 0)
+    , EVMSimple MLOAD
+    , EVMDup 1 ]
+    ++ sizeCode ++
+    [ EVMSimple ADD
+    , EVMPush (makeWord 0)
+    , EVMSimple MSTORE ]
   
+      where compileSizeExpr = 
+                case sizeExpr of 
+                  Just expr -> compileExpr expr
+                  Nothing -> do allocStackItem
+                                return [EVMPush (makeWord 1)]
+
+compileExpr (AssignExpr lhsExpr rhsExpr) = do
+  rhsCode <- compileExpr rhsExpr
+  allocStackItem
+  lhsCode <- compileExpr lhsExpr
+  popStack
+  popStack
+  return $
+    rhsCode ++ 
+    [ EVMDup 1 ] ++ 
+    lhsCode ++ 
+    [ EVMSimple MSTORE ]
+
 {-
 checkExpr (DefExpr decls body) = do
   enterScope

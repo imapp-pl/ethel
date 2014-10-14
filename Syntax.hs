@@ -39,6 +39,14 @@ data Expression = LitExpr
                   , lhsExpr :: Expression
                   , rhsExpr :: Expression }
 
+                | NewExpr
+                  { pos :: Position
+                  , newSizeExpr :: Maybe Expression }
+
+                | AssignExpr
+                  { asgnLhs :: Expression
+                  , asgnRhs :: Expression }
+
 
 data DeclType = DefDecl | ArgDecl
 
@@ -82,6 +90,7 @@ data Program = Program
 
 infixl 6 <+>
 (<+>) = (PP.<+>)
+(<>) = (PP.<>)
 
 infixl 5 $$, $+$
 ($$) = (PP.$$)
@@ -103,27 +112,47 @@ declToDoc decl =
      e -> head <+> exprToDoc False e
 
 exprToDoc _ (LitExpr _ v) = PP.text $ show v
+
 exprToDoc _ (VarExpr _ id) = PP.text id
+
 exprToDoc isArg(CallExpr _ func args) =
-  inParens isArg $
-  PP.text func <+> PP.hsep (map (exprToDoc True) args)
+    inParens isArg $
+    PP.text func <+> PP.hsep (map (exprToDoc True) args)
+
 exprToDoc isArg (LetExpr decl body) =
-  inParens isArg $
-  declToDoc decl 
-  $+$ PP.text "in" <+> exprToDoc False body
+    inParens isArg $
+    declToDoc decl $+$ 
+    PP.text "in" <+> 
+    exprToDoc False body
+
 exprToDoc isArg (IfExpr _ cond texp fexp) =
-  inParens isArg $
-  PP.text "if" <+> exprToDoc False cond <+> 
-  PP.text "then" <+> exprToDoc False texp $$
-  PP.text "else" <+> exprToDoc False fexp
+    inParens isArg $
+    PP.text "if" <+> exprToDoc False cond <+> 
+    PP.text "then" <+> exprToDoc False texp $$
+    PP.text "else" <+> exprToDoc False fexp
+
 exprToDoc isArg (UnOpExpr _ op arg) =
-  inParens isArg $
-  PP.text op <+> exprToDoc True arg
+    inParens isArg $
+    PP.text op <+> exprToDoc True arg
+
 exprToDoc isArg (BinOpExpr op lhs rhs) =
-  inParens isArg $
-  exprToDoc True lhs <+>
-  PP.text op <+>
-  exprToDoc True rhs
+    inParens isArg $
+    exprToDoc True lhs <+>
+    PP.text op <+>
+    exprToDoc True rhs
+
+exprToDoc isArg (NewExpr _ sizeExp) = 
+    inParens isArg $
+    PP.text "new" <+>
+    case sizeExp of
+      Just exp -> PP.text "[" <> exprToDoc False exp <> PP.text "]"
+      Nothing -> PP.empty
+
+exprToDoc isArg (AssignExpr lhsExp rhsExp) =
+    inParens isArg $
+    exprToDoc True lhsExp <+>
+    PP.text ":=" <+>
+    exprToDoc True rhsExp 
 
 inParens True doc = PP.text "(" <+> doc <+> PP.text ")"
 inParens False doc = doc
