@@ -88,11 +88,26 @@ popStack :: CompilerMonad info ()
 popStack = 
     modify $ \ cs -> cs { csLocalStack = Stack.pop (csLocalStack cs) }
 
+popMany :: Int -> CompilerMonad info ()
+popMany 0 = return ()
+popMany n = do
+    popStack
+    popMany (n-1)             
+
 allocStackItem :: CompilerMonad info ()
 allocStackItem = pushStack S.fakeDecl
 
 stackSize :: CompilerMonad info Int
 stackSize = gets csLocalStack >>= return . Stack.stackSize
+
+checkStackSize :: Int -> String -> CompilerMonad info ()
+checkStackSize expected details = do
+    size <- stackSize
+    when (size /= expected) $ error $
+        "Wrong stack size: expected " ++ show expected ++
+        ", actual: " ++ show size ++
+        ", details: " ++ show details
+  
 
 stackOffset :: S.Declaration -> CompilerMonad info (Maybe Stack.Offset)
 stackOffset decl = gets csLocalStack >>= return . Stack.offset decl
