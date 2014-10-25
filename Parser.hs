@@ -127,7 +127,7 @@ primaryExpression isArg =
     newExpression <|>
     do pos <- getPosition
        ident <- identifier
-       args <- many (primaryExpression True)
+       args <- if isArg then return [] else many (primaryExpression True)
        case args of 
          [] -> return $ VarExpr pos ident
          exps -> return $ CallExpr pos ident exps

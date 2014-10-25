@@ -3,7 +3,7 @@ module Compiler where
 import Prelude hiding (EQ, LT, GT)
 import qualified Data.HashMap.Strict as HM
 import Data.List (mapAccumL)
-import Control.Monad (foldM, liftM)
+import Control.Monad (foldM, liftM, when)
 
 import CompilerState
 import EVMCode
@@ -187,11 +187,20 @@ compileExpr (CallExpr pos ident args) = do
                    show arity ++ " arguments"
                  return []
                 
-         else do allocStackItem -- leave space for return address
+         else do initSize <- stackSize
+
+                 allocStackItem -- leave space for return address
+                 checkStackSize (initSize + 1) ""
+
                  argsCode <- mapM compileExpr args
+                 checkStackSize (initSize + 1 + length args) "call args"
+
                  retLabel <- uniqueName "return" 
                  let funcLabel = "func." ++ declIdent decl
-                 popStack       -- the callee pops the return address 
+                 -- popStack       -- the callee pops the return address 
+                 popMany (length args)
+                 checkStackSize (initSize + 1) "after call"
+
                  return $
                    [ EXTComment $ "call to " ++ declIdent decl,
                      EXTLabelAddr retLabel ]
@@ -212,11 +221,19 @@ compileExpr (LetExpr decl body) = do
   return $ declCode ++ bodyCode
 
 compileExpr (IfExpr pos cexp texp fexp) = do
+  initSize <- stackSize
+
   condCode <- compileExpr cexp
   popStack
-  thenCode <- compileExpr texp
-  popStack
+  checkStackSize initSize "cond code"
+  
   elseCode <- compileExpr fexp
+  popStack
+  checkStackSize initSize "else code"
+  
+  thenCode <- compileExpr texp
+  checkStackSize (initSize+1) "then code"
+
   thenLabel <- uniqueName "then"
   fiLabel <- uniqueName "fi"
   return $ condCode ++
@@ -227,12 +244,12 @@ compileExpr (IfExpr pos cexp texp fexp) = do
              [EXTLabel fiLabel]
           
 compileExpr (BinOpExpr op lhs rhs) = do
-  lhsCode <- compileExpr lhs
   rhsCode <- compileExpr rhs
+  lhsCode <- compileExpr lhs
   popStack
   popStack
   allocStackItem
-  return $ lhsCode ++ rhsCode ++ map EVMSimple (opcode op)
+  return $ rhsCode ++ lhsCode ++ map EVMSimple (opcode op)
 
       where opcode "+" = [ADD]
             opcode "-" = [SUB]                  
