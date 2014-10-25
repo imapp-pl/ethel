@@ -35,7 +35,7 @@ insertOrReport ident decl = do
 
     
 
-compileProgram :: Program -> Compiler (Int, EVMCode)
+compileProgram :: Program -> Compiler (Int, [(Int,EVMInstr)])
 compileProgram prog = do
   -- enter top-level
   enterScope 
@@ -59,19 +59,19 @@ compileProgram prog = do
 
       label2pos = HM.fromList posLabels
 
-      completedCode = map (replaceJumpLabel labelSize label2pos) allCode 
+      completedCode = map (replaceJumpLabel labelSize label2pos) posCode 
 
   return (labelSize, completedCode)
 
   where isLabel (_, EXTLabel _) = True
         isLabel _ = False
 
-        replaceJumpLabel labelSize label2pos (EXTLabelAddr l) = 
-            EVMPush $ makeNWord labelSize pos
-            where --(Just pos) = HM.lookup l label2pos 
-              pos = case HM.lookup l label2pos of
-                      (Just p) -> p
-                      Nothing -> error $ "cannot resolve label " ++ l
+        replaceJumpLabel labelSize label2pos (pos, EXTLabelAddr l) = 
+            (pos, EVMPush $ makeNWord labelSize dest)
+            where 
+              dest = case HM.lookup l label2pos of
+                       (Just p) -> p
+                       Nothing -> error $ "cannot resolve label " ++ l
         replaceJumpLabel _ _ instr = instr
 
 computeLabelSize :: EVMCode -> Int
