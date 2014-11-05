@@ -90,8 +90,9 @@ ifExpression = do
 
 numericExpression :: Parser Expression
 numericExpression = E.buildExpressionParser table (primaryExpression False)
-  where table = [ [ prefix "-", prefix "+", prefix "!", prefix "*" ]
-                , [ binary "*", binary "/" ]
+  where table = [ [ prefix "!", prefix "*" ] 
+                  -- [ prefix "-", prefix "+" ]
+                , [ binary "@", binary "/" ]
                 , [ binary "+", binary "-" ]
                 , [ binary "==", binary "<>",
                     binary "<", binary "<=",

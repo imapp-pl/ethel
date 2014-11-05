@@ -2,10 +2,11 @@
 module EVMCode where
 
 import Prelude hiding (EQ, GT, LT)
+
+import qualified Data.Array.Unboxed as A
 import qualified Data.ByteString as BS
 import Data.List (mapAccumL)
 import Data.Word
-import qualified Data.Array.Unboxed as A
 import Numeric (showHex)
 
 data LargeWord = LargeWord
@@ -39,9 +40,10 @@ makeWord16 = makeNWord 2
 data EVMOpcode =
     -- 0x00
     STOP | ADD | MUL | SUB | DIV | SDIV | MOD | SMOD |
-    EXP | NEG | LT | GT | SLT | SGT | EQ | NOT |
+    ADDMOD | MULMOD | EXP | SIGNEXTEND |
     -- 0x10
-    AND | OR | XOR | BYTE | ADDMOD | MULMOD |
+    LT | GT | SLT | SGT | EQ | ISZERO | AND | OR |
+    XOR | NOT | BYTE |
     -- 0x20
     SHA3 |
     -- 0x30
@@ -52,18 +54,10 @@ data EVMOpcode =
     -- 0x40
     PREVHASH | COINBASE | TIMESTAMP | NUMBER | DIFFICULTY | GASLIMIT |
     -- 0x50
-    POP |
-    -- 0x53
-    MLOAD | MSTORE | MSTORE8 | SLOAD | SSTORE | JUMP | JUMPI |
+    POP | MLOAD | MSTORE | MSTORE8 | SLOAD | SSTORE | JUMP | JUMPI |
     PC | MSIZE | GAS | JUMPDEST |
-    -- 0x60
-    -- PUSH | -- LargeWord |
-    -- 0x80
-    -- DUP | -- Int |
-    -- 0x90
-    -- SWAP | -- Int |
     -- 0xf0
-    CREATE | CALL | RETURN | POST | CALLSTATELESS |
+    CREATE | CALL | RETURN | CALLCODE |
     -- 0xff
     SUICIDE 
   deriving (Show, Eq, Ord, A.Ix)
@@ -74,6 +68,7 @@ data EVMInstr = EVMSimple EVMOpcode
               | EVMPush LargeWord
               | EVMDup Int
               | EVMSwap Int
+              | EVMLog Int
               | EXTComment String
               | EXTLabel Label
               | EXTLabelAddr Label
@@ -85,6 +80,7 @@ instance Show EVMInstr where
                         " " ++ show (wordBytes word)
   show (EVMDup n) = "DUP" ++ show n
   show (EVMSwap n) = "SWAP" ++ show n
+  show (EVMLog n) = "LOG" ++ show n
   show (EXTComment s) = ";; " ++ s
   show (EXTLabel l) = l ++ ":"
   show (EXTLabelAddr l) = "[" ++ l ++ "]"
@@ -107,7 +103,7 @@ showPos code = concat strings
 instrSize :: Int -> EVMInstr -> Int
 instrSize _ (EVMPush lw) = 1 + wordSize lw
 instrSize _ (EXTComment _) = 0
-instrSize _ (EXTLabel _) = 0
+instrSize labelSize (EXTLabel _) = instrSize labelSize (EVMSimple JUMPDEST)
 instrSize labelSize (EXTLabelAddr _) = labelSize + 1 -- 1 added for PUSH
 instrSize _ _ = 1
 
@@ -120,10 +116,11 @@ instr2bytes (EVMPush lw) = (fromIntegral (0x60 - 1 + wordSize lw))
                            : wordBytes lw
 instr2bytes (EVMDup n)   = [fromIntegral (0x80 - 1 + n)]
 instr2bytes (EVMSwap n)  = [fromIntegral (0x90 - 1 + n)]
+instr2bytes (EVMLog n)   = [fromIntegral (0xa0 + n)] -- operand starts from 0
 instr2bytes (EVMSimple op) = [fromIntegral (opcode2byteMap A.! op)]
 
 instr2bytes (EXTComment _) = []
-instr2bytes (EXTLabel _) = []
+instr2bytes (EXTLabel _) = instr2bytes (EVMSimple JUMPDEST)
 instr2bytes (EXTLabelAddr l) = error "EXTLabelAddr has undefined byte representation!"
 
 code2bytes :: EVMCode -> [Word8]
@@ -151,10 +148,11 @@ byteOpcodePairs :: [(Word8, EVMOpcode)]
 byteOpcodePairs =
   zip [fromIntegral 0x00 ..]
   [STOP, ADD, MUL, SUB, DIV, SDIV, MOD, SMOD,
-   EXP, NEG, LT, GT, SLT, SGT, EQ, NOT ]
+   ADDMOD, MULMOD, EXP, SIGNEXTEND ]
   ++
   zip [0x10 ..]
-  [AND, OR, XOR, BYTE, ADDMOD, MULMOD ] 
+  [LT, GT, SLT, SGT, EQ, ISZERO, AND, OR,
+   XOR, NOT, BYTE ]
   ++
   [(0x20, SHA3)]
   ++
@@ -165,13 +163,12 @@ byteOpcodePairs =
   zip [0x40 ..]
   [PREVHASH, COINBASE, TIMESTAMP, NUMBER, DIFFICULTY, GASLIMIT]
   ++
-  [(0x50, POP)]
-  ++
-  zip [0x53 ..]
-  [MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI, PC, MSIZE, GAS, JUMPDEST]
+  zip [0x50 ..]
+  [POP, MLOAD, MSTORE, MSTORE8, SLOAD, SSTORE, JUMP, JUMPI,
+   PC, MSIZE, GAS, JUMPDEST]
   ++
   zip [0xf0 ..]
-  [CREATE, CALL, RETURN, POST, CALLSTATELESS]
+  [CREATE, CALL, RETURN, CALLCODE]
   ++
   [(0xff, SUICIDE)]
 

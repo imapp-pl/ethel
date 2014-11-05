@@ -42,37 +42,39 @@ compileProgram prog = do
   
   -- compile top-level declarations and the main expression
   compiledDecls <- compileDecls (decls prog)
-  -- (mainDecl, mainCode) <- compileMain (mainExpr prog)
   compiledMain <- compileMain (mainExpr prog)              
 
-  let allCode = foldr (++) [] (map snd (compiledMain : compiledDecls))
-                
-      labelSize = computeLabelSize allCode
+  let code = foldr (++) [] (map snd (compiledMain : compiledDecls))
+  return $ rewriteLabels code
 
-      (_, posCode) = mapAccumL (\ pos instr -> 
-                                    let sz = instrSize labelSize instr 
-                                    in  (pos + sz, (pos, instr)))
-                     0 allCode
 
-      posLabels = map (\ (pos, EXTLabel l) -> (l, pos) )
+rewriteLabels :: EVMCode -> (Int, EVMCode)
+rewriteLabels code = (labelSize, code')
+
+    where labelSize = computeLabelSize code
+
+          code' = map (rewriteLabel labelSize label2pos) code
+        
+          rewriteLabel labelSize label2pos (EXTLabelAddr l) = 
+            case HM.lookup l label2pos of
+              (Just pos) -> EVMPush $ makeNWord labelSize pos
+              Nothing -> error $ "cannot resolve label " ++ l
+          rewriteLabel _ _ instr = instr
+
+          label2pos = HM.fromList posLabels
+
+          posLabels = map (\ (pos, EXTLabel l) -> (l, pos) )
                       $ filter isLabel posCode
 
-      label2pos = HM.fromList posLabels
+          (_, posCode) = mapAccumL (\ pos instr -> 
+                                     let sz = instrSize labelSize instr 
+                                     in  (pos + sz, (pos, instr)))
+                         0 code
 
-      completedCode = map (replaceJumpLabel labelSize label2pos) allCode 
+          isLabel (_, EXTLabel _) = True
+          isLabel _ = False
 
-  return (labelSize, completedCode)
-
-  where isLabel (_, EXTLabel _) = True
-        isLabel _ = False
-
-        replaceJumpLabel labelSize label2pos (EXTLabelAddr l) = 
-            EVMPush $ makeNWord labelSize pos
-            where --(Just pos) = HM.lookup l label2pos 
-              pos = case HM.lookup l label2pos of
-                      (Just p) -> p
-                      Nothing -> error $ "cannot resolve label " ++ l
-        replaceJumpLabel _ _ instr = instr
+   
 
 computeLabelSize :: EVMCode -> Int
 computeLabelSize code = labelSize 1
@@ -208,7 +210,6 @@ compileExpr (CallExpr pos ident args) = do
                    [ EXTLabelAddr funcLabel, 
                      EVMSimple JUMP,
                      EXTLabel retLabel,
-                     EVMSimple JUMPDEST,
                      EXTComment "end of call sequence" ]
                    
 compileExpr (LetExpr decl body) = do
@@ -218,7 +219,8 @@ compileExpr (LetExpr decl body) = do
   popStack
   pushStack decl
   bodyCode <- compileExpr body
-  return $ declCode ++ bodyCode
+  popStack -- remove the local var after the body completes
+  return $ declCode ++ bodyCode ++ [ EVMSwap 1, EVMSimple POP ]
 
 compileExpr (IfExpr pos cexp texp fexp) = do
   initSize <- stackSize
@@ -269,10 +271,8 @@ compileExpr (UnOpExpr _ op arg) = do
   allocStackItem
   return $ argCode ++ map EVMSimple (opcode op)
 
-      where opcode "+" = []
-            opcode "-" = [NEG]
-            opcode "!" = [NOT]
-            opcode "*" = [MLOAD]
+      where opcode "!" = [NOT]
+            opcode "@" = [MLOAD]
 
 compileExpr (NewExpr _ sizeExpr) = do
   allocStackItem
