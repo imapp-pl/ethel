@@ -36,6 +36,11 @@ makeNWord sz i = LargeWord sz paddedBytes
 makeWord32 = makeNWord 4
 makeWord16 = makeNWord 2
 
+numValue :: (Num a) => LargeWord -> a
+numValue = fromInteger . bytes2I 0 . wordBytes
+    where bytes2I i (w8:bytes) = bytes2I (i * 256 + toInteger w8) bytes
+          bytes2I i [] = i
+
 
 data EVMOpcode =
     -- 0x00
@@ -90,6 +95,14 @@ type EVMCode = [EVMInstr]
 instance Show EVMCode where
   show code = foldr (\ i s -> i ++ '\n':s) "" (map show code)
 
+showPos :: [(Int,EVMInstr)] -> String
+showPos code = concat $ map showInstr code
+    where showInstr (pos, EXTLabel l) = l ++ ":\n"
+          showInstr (pos, EXTComment s) = ";; " ++ s ++ "\n"
+          showInstr (pos, instr) = shows pos $ ":\t" ++ shows instr "\n"
+               
+
+{-
 showPos :: EVMCode -> String
 showPos code = concat strings
     where (_, strings) = mapAccumL (\ pos instr -> 
@@ -99,6 +112,7 @@ showPos code = concat strings
           instrAt pos (EXTLabel l) = l ++ ":\n"
           instrAt pos (EXTComment s) = ";; " ++ s ++ "\n"
           instrAt pos instr = shows pos $ ":\t" ++ shows instr "\n"
+-}
 
 instrSize :: Int -> EVMInstr -> Int
 instrSize _ (EVMPush lw) = 1 + wordSize lw
