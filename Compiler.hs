@@ -3,6 +3,7 @@ module Compiler where
 import Prelude hiding (EQ, LT, GT)
 import qualified Data.HashMap.Strict as HM
 import Data.List (mapAccumL)
+import qualified Data.Set as Set
 import Control.Monad (foldM, liftM, when)
 
 import CompilerState
@@ -44,9 +45,22 @@ compileProgram prog = do
   compiledDecls <- compileDecls (decls prog)
   compiledMain <- compileMain (mainExpr prog)              
 
-  let code = foldr (++) [] (map snd (compiledMain : compiledDecls))
-  return $ rewriteLabels code
+  let code   = foldr (++) [] (map snd (compiledMain : compiledDecls))
+  let code'  = removeUnusedLabels code
+  let code'' = rewriteLabels code'
+  return code''
 
+removeUnusedLabels :: EVMCode -> EVMCode
+removeUnusedLabels code = filter isUsedLabel code
+    where 
+      isUsedLabel (EXTLabel l) = Set.member l labels
+      isUsedLabel _ = True
+                      
+      labels = labels' Set.empty code
+
+      labels' ll ((EXTLabelAddr l):code) = labels' (Set.insert l ll) code
+      labels' ll (_:code) = labels' ll code
+      labels' ll [] = ll
 
 rewriteLabels :: EVMCode -> (Int, EVMCode)
 rewriteLabels code = (labelSize, code')
@@ -72,9 +86,7 @@ rewriteLabels code = (labelSize, code')
                          0 code
 
           isLabel (_, EXTLabel _) = True
-          isLabel _ = False
-
-   
+          isLabel _ = False   
 
 computeLabelSize :: EVMCode -> Int
 computeLabelSize code = labelSize 1
@@ -86,6 +98,7 @@ computeLabelSize code = labelSize 1
 
           isLabelAddrInstr (EXTLabelAddr _) = True
           isLabelAddrInstr _ = False
+
 
 compileMain :: Expression -> Compiler (Declaration, EVMCode)
 compileMain exp = do
