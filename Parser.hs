@@ -48,6 +48,9 @@ literal = Tok.natural lexer
 inParens :: Parser a -> Parser a
 inParens = Tok.parens lexer
 
+inBrackets :: Parser a -> Parser a
+inBrackets = Tok.brackets lexer
+
 program :: Parser Program
 program = do
   Tok.whiteSpace lexer
@@ -90,15 +93,15 @@ ifExpression = do
 
 numericExpression :: Parser Expression
 numericExpression = E.buildExpressionParser table (primaryExpression False)
-  where table = [ [ prefix "!", prefix "@" ] 
+  where table = [ [ prefix "!" ] 
                   -- [ prefix "-", prefix "+" ]
                 , [ binary "*", binary "/" ]
                 , [ binary "+", binary "-" ]
                 , [ binary "==", binary "<>",
                     binary "<", binary "<=",
-                    binary ">", binary ">=",
-                    assign
-                  ]
+                    binary ">", binary ">=" ]
+		, [ assign ]
+		, [ sequence ]		    
                 ]
         prefix op = E.Prefix $ do { operator op;
                                     pos <- getPosition;
@@ -110,22 +113,14 @@ numericExpression = E.buildExpressionParser table (primaryExpression False)
         assign = E.Infix ( do { operator ":="; return AssignExpr } )
                  E.AssocRight
 
-{-
-primaryExpression :: Parser Expression
-primaryExpression = do
-  pos <- getPosition
-  func <- identifier
-  args <- many atomicExpression
-  return $ case args of
-    [] -> func
-    _  -> CallExpr func args
--}
+	sequence = E.Infix ( do { operator ";"; return SeqExpr } )
+		   E.AssocRight
 
 primaryExpression :: Bool -> Parser Expression
 primaryExpression isArg = 
     literalExpression <|> 
     inParens expression <|>    
-    newExpression <|>
+    memIndexExpression <|>
     do pos <- getPosition
        ident <- identifier
        args <- if isArg then return [] else many (primaryExpression True)
@@ -139,14 +134,11 @@ literalExpression = do
   num <- literal
   return $ LitExpr pos num
 
-newExpression :: Parser Expression
-newExpression = do
+memIndexExpression :: Parser Expression
+memIndexExpression = do
   pos <- getPosition
-  keyword "new"
-  sizeExpr <- optionMaybe $ Tok.brackets lexer expression
-  return $ NewExpr pos sizeExpr
-
-
+  indexExp <- inBrackets expression
+  return $ MemIndexExpr pos indexExp
 
 parseString input =
   case runParser program () "source" input of

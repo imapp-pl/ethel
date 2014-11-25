@@ -29,6 +29,10 @@ data Expression = LitExpr
                   , thenExpr :: Expression
                   , elseExpr :: Expression }
 
+  		| SeqExpr
+		  { fstExp :: Expression
+		  , sndExp :: Expression }		  
+
                 | UnOpExpr
                   { pos :: Position
                   , unaryOp :: Ident
@@ -39,9 +43,9 @@ data Expression = LitExpr
                   , lhsExpr :: Expression
                   , rhsExpr :: Expression }
 
-                | NewExpr
+                | MemIndexExpr
                   { pos :: Position
-                  , newSizeExpr :: Maybe Expression }
+                  , indexExpr :: Expression }
 
                 | AssignExpr
                   { asgnLhs :: Expression
@@ -131,6 +135,12 @@ exprToDoc isArg (IfExpr _ cond texp fexp) =
     PP.text "then" <+> exprToDoc False texp $$
     PP.text "else" <+> exprToDoc False fexp
 
+exprToDoc isArg (SeqExpr exp1 exp2) = 
+    inParens isArg $
+    exprToDoc False exp1 <+> 
+    PP.text ";" $+$
+    exprToDoc False exp2
+
 exprToDoc isArg (UnOpExpr _ op arg) =
     inParens isArg $
     PP.text op <+> exprToDoc True arg
@@ -141,12 +151,8 @@ exprToDoc isArg (BinOpExpr op lhs rhs) =
     PP.text op <+>
     exprToDoc True rhs
 
-exprToDoc isArg (NewExpr _ sizeExp) = 
-    inParens isArg $
-    PP.text "new" <+>
-    case sizeExp of
-      Just exp -> PP.text "[" <> exprToDoc False exp <> PP.text "]"
-      Nothing -> PP.empty
+exprToDoc isArg (MemIndexExpr _ indexExp) =
+    PP.text "[" <> exprToDoc False indexExp <> PP.text "]"
 
 exprToDoc isArg (AssignExpr lhsExp rhsExp) =
     inParens isArg $

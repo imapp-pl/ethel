@@ -258,6 +258,15 @@ compileExpr (IfExpr pos cexp texp fexp) = do
              thenCode ++
              [EXTLabel fiLabel]
           
+compileExpr (SeqExpr exp1 exp2) = do
+  exp1Code <- compileExpr exp1
+  popStack
+  exp2Code <- compileExpr exp2
+  return $
+    exp1Code ++
+    [ EVMSimple POP ] ++
+    exp2Code
+
 compileExpr (BinOpExpr op lhs rhs) = do
   rhsCode <- compileExpr rhs
   lhsCode <- compileExpr lhs
@@ -285,63 +294,31 @@ compileExpr (UnOpExpr _ op arg) = do
   return $ argCode ++ map EVMSimple (opcode op)
 
       where opcode "!" = [NOT]
-            opcode "@" = [MLOAD]
 
-compileExpr (NewExpr _ sizeExpr) = do
-  allocStackItem
-  allocStackItem
-  sizeCode <- compileSizeExpr
-  popStack
-  popStack
+compileExpr (MemIndexExpr _ indexExpr) = do
+  indexCode <- compileExpr indexExpr
   return $ 
-    [ EVMPush (makeWord 0)
-    , EVMSimple MLOAD ]
-    ++ sizeCode ++
-    [ EVMPush (makeWord 32)
-    , EVMSimple MUL
-    , EVMSimple ADD
-    , EVMDup 1
-    , EVMPush (makeWord 0)
-    , EVMSimple MSTORE ]
-  
-      where compileSizeExpr = 
-                case sizeExpr of 
-                  Just expr -> compileExpr expr
-                  Nothing -> do allocStackItem
-                                return [EVMPush (makeWord 1)]
+    indexCode ++ 
+    [ EVMPush (makeWord 32), 
+      EVMSimple MUL, 
+      EVMSimple MLOAD ] 
 
-compileExpr (AssignExpr lhsExpr rhsExpr) = do
+compileExpr (AssignExpr (MemIndexExpr _ indexExpr) rhsExpr) = do
   rhsCode <- compileExpr rhsExpr
   allocStackItem
-  lhsCode <- compileExpr lhsExpr
+  indexCode <- compileExpr indexExpr
   popStack
   popStack
   return $
     rhsCode ++ 
     [ EVMDup 1 ] ++ 
-    lhsCode ++ 
-    [ EVMSimple MSTORE ]
+    indexCode ++ 
+    [ EVMPush (makeWord 32),
+      EVMSimple MUL,
+      EVMSimple MSTORE ]
 
-{-
-checkExpr (DefExpr decls body) = do
-  enterScope
-  checkDecls decls
-  checkExpr body
-  leaveScope
+compileExpr (AssignExpr lhsExpr rhsExpr) = do
+  compilerError (pos lhsExpr) $
+    "Syntax error: missing brackets '[ ]' on the LHS of assignment"
+  return []
 
-checkExpr (IfExpr pos cexp texp fexp) = do
-  checkExpr cexp
-  checkExpr texp
-  checkExpr fexp
-
-checkExpr (UnOpExpr pos op arg) = do
-  checkExpr arg
-
-checkExpr (BinOpExpr op lhs rhs) = do
-  checkExpr lhs
-  checkExpr rhs
--}
-  
-                    
-                    
-               
