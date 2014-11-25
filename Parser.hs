@@ -70,8 +70,10 @@ declaration = do
   return $ makeDecl pos id args body
 
 expression :: Parser Expression
-expression =
-  letExpression <|> ifExpression <|> numericExpression
+expression = do
+  exps <- (letExpression <|> ifExpression <|> numericExpression)
+          `sepBy1` (operator ";")
+  return $ foldr1 SeqExpr exps  		   
 
 letExpression :: Parser Expression
 letExpression = do
@@ -101,7 +103,6 @@ numericExpression = E.buildExpressionParser table (primaryExpression False)
                     binary "<", binary "<=",
                     binary ">", binary ">=" ]
 		, [ assign ]
-		, [ sequence ]		    
                 ]
         prefix op = E.Prefix $ do { operator op;
                                     pos <- getPosition;
@@ -112,9 +113,6 @@ numericExpression = E.buildExpressionParser table (primaryExpression False)
 
         assign = E.Infix ( do { operator ":="; return AssignExpr } )
                  E.AssocRight
-
-	sequence = E.Infix ( do { operator ";"; return SeqExpr } )
-		   E.AssocRight
 
 primaryExpression :: Bool -> Parser Expression
 primaryExpression isArg = 
