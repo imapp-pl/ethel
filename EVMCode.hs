@@ -62,7 +62,7 @@ data EVMOpcode =
     POP | MLOAD | MSTORE | MSTORE8 | SLOAD | SSTORE | JUMP | JUMPI |
     PC | MSIZE | GAS | JUMPDEST |
     -- 0xf0
-    CREATE | CALL | CALLCODE | RETURN
+    CREATE | CALL | CALLCODE | RETURN |
     -- 0xff
     SUICIDE 
   deriving (Show, Eq, Ord, A.Ix)
